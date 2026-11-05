@@ -1,0 +1,88 @@
+{
+  "provenance": "Values copied from actual mcp__wolfram__WolframLanguageEvaluator output for checks.wl; symbolic strings de-escaped for readability",
+  "result": {
+    "basis_identity_residual": [
+      0,
+      0
+    ],
+    "orthogonality": [
+      [
+        1,
+        0
+      ],
+      [
+        0,
+        1
+      ]
+    ],
+    "four_orbital_hybrid_orthogonality": [
+      [
+        1,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        1,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        1,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        1
+      ]
+    ],
+    "nonlinearity_does_not_commute": "{-1/2*((-1 + Sqrt[2])*x1^2) + x1*x2 - ((-1 + Sqrt[2])*x2^2)/2, -1/2*((x1 - x2)*((-1 + Sqrt[2])*x1 + (1 + Sqrt[2])*x2))}",
+    "interference_probability": "Cos[theta/2]^2",
+    "expert_matrix_entries": 1048576,
+    "rank64_entry_ratio": 0.15625,
+    "rank64_bf16_vs_fp8_byte_ratio_no_metadata": 0.3125,
+    "rank_break_even_equal_precision": "Element[rr, Integers] && Inequality[1, LessEqual, rr, LessEqual, 409]",
+    "rank_break_even_bf16_vs_fp8": "Element[rr, Integers] && Inequality[1, LessEqual, rr, LessEqual, 204]",
+    "hadamard2048_add_sub_count_excluding_normalization": 22528,
+    "complex128_state_GiB": [
+      [
+        30,
+        16
+      ],
+      [
+        32,
+        64
+      ],
+      [
+        33,
+        128
+      ]
+    ],
+    "uniform_independent_eight_slot_expert_union_ASSUMPTION": 57.42083078599535,
+    "rotation_relative_weight_error_reduction_percent": [
+      15.566945060055627,
+      2.2398566027061806,
+      9.770039755864612
+    ],
+    "rank64_relative_weight_error_percent": [
+      60.85668140383203,
+      85.60844464246313,
+      77.71349973363621
+    ],
+    "rank204_relative_weight_error_percent": [
+      15.022797722044212,
+      59.989309608626066,
+      49.05376373789379
+    ],
+    "selected_first_expert_zero_channel_fraction": 0.546875,
+    "selected_first_expert_zero_weight_payload_bytes": 1720320,
+    "selected_first_expert_total_weight_payload_bytes": 3145728,
+    "amdahl_halving_80percent_EXAMPLE": 1.6666666666666667,
+    "amdahl_halving_20percent_EXAMPLE": 1.1111111111111112
+  }
+}

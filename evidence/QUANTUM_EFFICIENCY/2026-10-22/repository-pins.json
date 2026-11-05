@@ -1,0 +1,79 @@
+[
+  {
+    "repo": "omega",
+    "root": "/home/drakestapleton/workspace/omega",
+    "remote": "git@github.com:aien-spark/omega.git",
+    "head": "ce42e62f9632b495f494aa8e419a70f4a36c88c0",
+    "main": "a8ffd2b912c84197d08f963b05f9c7d8b30a3f8a"
+  },
+  {
+    "repo": "cudapp",
+    "root": "/home/drakestapleton/workspace/cudapp",
+    "remote": "git@github.com:aien-dev/CUDApp.git",
+    "head": "8f0b645dbc859f1b63868cec77880621aa70b42d",
+    "main": "232332422bfdc31c8918085b50f13c1e18ab702e"
+  },
+  {
+    "repo": "physics",
+    "root": "/home/drakestapleton/workspace/physics",
+    "remote": "git@github.com:aien-spark/physics.git",
+    "head": "e95e3ed2a86fe4bffe4d954fa94c27dfb5284280",
+    "main": "14273c5ce7d13fbc6e410c4fed9aa36837918177"
+  },
+  {
+    "repo": "aien-sovereign-core",
+    "root": "/home/drakestapleton/workspace/aien-sovereign-core",
+    "remote": "git@github.com:aien-spark/aien-sovereign-core.git",
+    "head": "c83eb5b2f96b3d0a36fcb5092fcf0d66af5dd0d0",
+    "main": "754c07b118f41ad899607b60329bd851b1ccb13e"
+  },
+  {
+    "repo": "aienos-repo",
+    "root": "/home/drakestapleton/workspace/aienos-repo",
+    "remote": "git@github.com:aien-dev/aienux.git",
+    "head": "7bc1713bee451573755375230e20cd60b4818f3b",
+    "main": "18e276590424593647cd7c39c6d16c2f9f8d6027"
+  },
+  {
+    "repo": "interplane",
+    "root": "/home/drakestapleton/workspace/interplane",
+    "remote": "git@github.com:aien-dev/interplane.git",
+    "head": "2866d2b1cbe1215ac451a6c23e4815d49d3f0758",
+    "main": "b669d06e21c9debb15073289d7c0b78b1b2d362c"
+  },
+  {
+    "repo": "aien-architecture",
+    "root": "/home/drakestapleton/workspace/aien-architecture",
+    "remote": "https://github.com/aien-dev/aien-architecture.git",
+    "head": "dbc07036878ec519142dbfa70d118a8806d34138",
+    "main": "1a3594340c70969c245554b07062efd8ead8a026"
+  },
+  {
+    "repo": "aien-train",
+    "root": "/home/drakestapleton/workspace/aien-train",
+    "remote": "git@github.com:aien-dev/aien-train.git",
+    "head": "ed8b6ea2562efdda7913234ca8f34b443714a987",
+    "main": "ed8b6ea2562efdda7913234ca8f34b443714a987"
+  },
+  {
+    "repo": "aien-rig",
+    "root": "/home/drakestapleton/workspace/aien-rig",
+    "remote": "git@github.com:aien-dev/aien-rig.git",
+    "head": "c1f49889e9b53c5507fe22fe6c19ede2ffb51660",
+    "main": "c1f49889e9b53c5507fe22fe6c19ede2ffb51660"
+  },
+  {
+    "repo": "allen",
+    "root": "/home/drakestapleton/workspace/allen",
+    "remote": "https://github.com/aien-dev/allen",
+    "head": "e97222eb82f1ec56e852ba9571786db9ccc5c97a",
+    "main": "e97222eb82f1ec56e852ba9571786db9ccc5c97a"
+  },
+  {
+    "repo": "aegis-runtime",
+    "root": "/home/drakestapleton/workspace/aegis-runtime",
+    "remote": "git@github.com:aien-dev/aegis-runtime.git",
+    "head": "e8eed5aac8612c1b846284c09d58e798e382c11b",
+    "main": "f85dbe3910dd2c29faff74a3a96d657531ca1320"
+  }
+]

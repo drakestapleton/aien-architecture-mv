@@ -1,0 +1,55 @@
+{
+  "source": "1a3594340c70969c245554b07062efd8ead8a026",
+  "mac_attempt": {
+    "exit_code": 0,
+    "stdout": "----------------------------------------------------------------------\ncheck_doctrine: scanned 30 files; 0 failure(s); 0 deferred finding(s).\ncheck_doctrine: PASS\n",
+    "stderr": "awk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\nawk: newline in string DOCTRINE_V1=0\nATLAS_... at source line 1\n",
+    "verdict": "INVALID: parser errors despite script printing PASS"
+  },
+  "minimal_mac_multiline_awk": {
+    "exit_code": 2,
+    "stdout": "",
+    "stderr": "/usr/bin/awk: newline in string A=0\nB=1... at source line 1\n"
+  },
+  "spark_exact_source_replay": {
+    "exit_code": 0,
+    "stdout": "----------------------------------------------------------------------\ncheck_doctrine: scanned 30 files; 0 failure(s); 0 deferred finding(s).\ncheck_doctrine: PASS\n",
+    "stderr": "",
+    "host": "spark",
+    "inputs": {
+      "doctrine/ARCHITECTURE.md": "9035853fd692da8bc99918abb4b497294831acbe08bc6a2a3cafc179cdb89ec3",
+      "doctrine/AIEN.md": "f23a9debb8c5bed0ef59869533927fe90f6c26e96ef904a603d499ee48d3dabb",
+      "doctrine/ATLAS.md": "245a6b586eee0f0f6c4b190ed2e44ef5382d81fab6d1a9c5f1d1ea74f4530b18",
+      "doctrine/PHYSICS.md": "c3c0bcdf8bb11ebf560151b81f499fdb9281b32dc72eb906a391f929e2636fec",
+      "doctrine/ROADMAP.md": "6f279fda3fda42defdf660a928fadae7539398c2f2fed8d023871907157c24a4",
+      "doctrine/TRUST.md": "b133e793510ff8aa4742c478880cda968a189f832377f0828883e59696c1b101",
+      "doctrine/OMEGA.md": "bf126edeef4481fa8a732b8e67ec19cadf7a1c11870d29a36770838a5cbb3f21",
+      "doctrine/FORGE.md": "229e74e68fefa401c423e86b3fd06848e3a6049311b4617f88a44a6a619d03f4",
+      "doctrine/INDEX.md": "466e1ed7287f371717b7dd9730d95ad64fda838fea40826bd142fd9cc4d3b40f",
+      "doctrine/DISCOVERY.md": "1894a52db714a7052f2f5b20902e2c285486697d2c70732ab1c22ba95341f18b",
+      "doctrine/SOVEREIGNTY.md": "4810e10fa5722907a35655f429118440bc0df079bb846bc43aa3d5f30a05e47a",
+      "scripts/check_doctrine.sh": "ea5c9069d5b716b294b01bca9c77bb778568703f55f9ecebd3358c983509b68a",
+      "docs/milestone-2-spec.md": "0a2abf05adc816e82e83bf6cd24e7a23b2c5cd268c72d7ee7b6eeacbf31f6499",
+      "docs/milestone-5-spec.md": "1281343f8135fefe618086a81415fa82699ee00632692a707b3c290781e09b5f",
+      "docs/milestone-14-spec.md": "a484d5d7731b30e5aaf5ab86cd0b00dfcf5d19c0c709c0c296d5248dc9c0919a",
+      "docs/milestone-6-spec.md": "427c7b213ff124c1cfc7264b75460af1f756e02b042bfa905ffba7aa1fbb199d",
+      "docs/milestone-18-spec.md": "205192b735ee2f858c628326f3527b801f9fb3faca18ae6cc98c074b856ffda3",
+      "docs/milestone-9-spec.md": "20d2e3a180229a59deb1a84bd1b029d3b2092604c498a7f764b3b46504c6c8bc",
+      "docs/milestone-12-spec.md": "622b1212c483422dabd8dd187b5cba7dcc63c1dd957e8c6052c09de407ea0cf0",
+      "docs/milestone-7-spec.md": "e7f3d78ea216d9a4092cf76397cffabacc89a119c3a9723eeae617be50b7804a",
+      "docs/milestone-13-spec.md": "b8dd1ef86f97ee0a45875380a7a36a09e3fd86bd96f347fa36706f4c81f13446",
+      "docs/milestone-17-spec.md": "3b2ef71eaecae95f54ca13232e06076bb25ac7c8b25212813c31b80e2d629b76",
+      "docs/milestone-8-spec.md": "30aaeb25a44b5b9c62df479704bebde167afb8ac7484e74a114adaf6b98c2b8d",
+      "docs/milestone-4-spec.md": "314393d101d1e5c3fe56b47609361641295bd30f8ef0d392dbf87d28099a3984",
+      "docs/milestone-15-spec.md": "5c941723d930608b2578956698205357ff034b581cdf312fd4aa2adbc98bb52a",
+      "docs/milestone-11-spec.md": "2ef578ae4fcb440dde9ac660d48cf538981e6828ba7e32691561b91adecb570d",
+      "docs/milestone-3-spec.md": "c58d4f421032f0abcb72a34f4cfa90639caadeaf9b9319d8b3f814d9e5c4e72c",
+      "docs/milestone-10-spec.md": "7dd89d64389b960e38ed91527b2e922c49506a72c15a54ea0e39f60f6640f181",
+      "docs/milestone-1-spec.md": "7f9e1fa8cd00231d3746e33ce87c69528dd9c0468e330c42769eec2b75963a13",
+      "docs/milestone-16-spec.md": "c5e80c38027f131896628bea24557908df5960ef94cce67349da65f4b8aa411a",
+      "docs/milestone-19-spec.md": "900a18cc653ad9770f1de4fb047c30881a22229a6ae5fda2972d68e25dec2ada"
+    }
+  },
+  "verdict": "PASS on Spark exact immutable inputs; Mac attempt not accepted",
+  "production_changes": false
+}

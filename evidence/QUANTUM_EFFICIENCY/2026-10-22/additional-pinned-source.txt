@@ -1,0 +1,188 @@
+PINNED aienos-repo 18e276590424593647cd7c39c6d16c2f9f8d6027 native/store/store_engine.c RC 0
+65:
+66:/* read_application_object, streamed one unit at a time through ws->unit.
+67: * Like Rust, every unit is read first in order (a read failure is RE_IO
+68: * whatever the bytes are), and only then is the extent judged. If out is
+69: * set the semantic bytes are copied there (caller checked the size). If cmp
+70: * is set, *differs reports whether the semantic bytes differ from cmp. */
+71:static int read_app_object(const st_dev *d, st_workspace *ws, const sv1_entry *e, uint8_t *out,
+72:                           const uint8_t *cmp, int *differs)
+73:{
+74:    sha256_ctx ctx;
+75:    int graph = 0;
+76:    uint32_t units;
+77:    if (sv1_unit_count(e->byte_length, &units) || units != e->unit_count)
+78:        graph = 1;
+79:    if (!graph && sv1_object_id_begin(&ctx, e->kind, e->version, e->byte_length))
+80:        graph = 1;
+81:    if (differs)
+82:        *differs = 0;
+83:    for (uint32_t i = 0; i < e->unit_count; i++) {
+84:        if (dev_read(d, e->first_unit + i, ws->unit))
+85:            return RE_IO;
+86:        if (graph)
+87:            continue;
+88:        uint64_t start = (uint64_t)i * SV1_UNIT;
+89:        uint64_t take = e->byte_length > start ? e->byte_length - start : 0;
+90:        if (take > SV1_UNIT)
+91:            take = SV1_UNIT;
+92:        sha256_update(&ctx, ws->unit, (size_t)take);
+93:        if (!sv1_all_zero(ws->unit + take, SV1_UNIT - (size_t)take)) graph = 1; /* GUARD:object-padding */
+94:        if (out)
+95:            sv1_copy(out + start, ws->unit, (size_t)take);
+96:        if (cmp && differs && !sv1_equal(cmp + start, ws->unit, (size_t)take))
+97:            *differs = 1;
+98:    }
+99:    if (graph)
+100:        return RE_GRAPH;
+101:    uint8_t id[32];
+102:    sha256_final(&ctx, id);
+103:    if (!sv1_equal(id, e->object_id, 32)) return RE_GRAPH; /* GUARD:object-hash */
+104:    return RE_OK;
+105:}
+325:        return ST_M_CORRUPT_RECOVERY_REQUIRED;
+326:    }
+327:    return ST_M_CORRUPT_RECOVERY_REQUIRED;
+328:}
+329:
+330:static int write_object(const st_dev *d, st_workspace *ws, uint64_t first, uint32_t units,
+331:                        const uint8_t *bytes, uint64_t len)
+332:{
+333:    for (uint32_t i = 0; i < units; i++) {
+334:        uint64_t start = (uint64_t)i * SV1_UNIT;
+335:        uint64_t take = len > start ? len - start : 0;
+336:        if (take > SV1_UNIT)
+337:            take = SV1_UNIT;
+338:        sv1_zero(ws->unit, SV1_UNIT);
+339:        sv1_copy(ws->unit, bytes + start, (size_t)take);
+340:        if (dev_write(d, first + i, ws->unit))
+341:            return ST_E_IO;
+342:    }
+343:    return 0;
+344:}
+345:
+346:typedef struct {
+PINNED aienos-repo 18e276590424593647cd7c39c6d16c2f9f8d6027 native/net/x25519.c RC 0
+40:static void sub(fe o, const fe a, const fe b) { for (int i = 0; i < 16; i++) o[i] = a[i] - b[i]; }
+41:
+42:static void mul(fe o, const fe a, const fe b)
+43:{
+44:    int64_t t[31];
+45:    for (int i = 0; i < 31; i++) t[i] = 0;
+46:    for (int i = 0; i < 16; i++)
+47:        for (int j = 0; j < 16; j++) t[i + j] += a[i] * b[j];
+48:    for (int i = 0; i < 15; i++) t[i] += 38 * t[i + 16];
+49:    for (int i = 0; i < 16; i++) o[i] = t[i];
+50:    carry(o);
+51:    carry(o);
+52:}
+53:
+54:static void sqr(fe o, const fe a) { mul(o, a, a); }
+55:
+56:/* o = i^(p-2) = 1/i. The exponent is public, so its branches are too. */
+57:static void invert(fe o, const fe in)
+58:{
+59:    fe c;
+60:    memcpy(c, in, sizeof c);
+PINNED aienos-repo 18e276590424593647cd7c39c6d16c2f9f8d6027 native/sig/ed25519.c RC 0
+540:    aienos_sha512_update(&c, pk, 32);
+541:    aienos_sha512_update(&c, msg, msg_len);
+542:    aienos_sha512_final(&c, kh);
+543:    aienos_sig_sc_reduce(ks, kh);
+544:
+545:    ge_scalarmult(&sB, &k.B, sig + 32, &k);
+546:    ge_scalarmult(&kA, &A, ks, &k);
+547:    ge_neg(&kA, &kA);
+548:    ge_add(&chk, &sB, &kA, &k); /* [S]B - [k]A, must equal R */
+549:    ge_tobytes(enc, &chk);
+550:    if (!aienos_sig_ct_equal(enc, sig, 32)) return AIENOS_SIG_ERR_INVALID; /* GUARD:r-check */
+551:    return AIENOS_SIG_OK;
+552:}
+PINNED omega a8ffd2b912c84197d08f963b05f9c7d8b30a3f8a src/crumbline/cl_search.c RC 0
+70:    size_t npending;
+71:    uint32_t pending_since;
+72:    uint8_t hyps[MAX_HYP][CL_DIGEST_BYTES];
+73:    size_t nhyp;
+74:    uint32_t max_queries;
+75:    bool stop, solved, first_submit_done;
+76:} S;
+77:
+78:static void emit(S *s, const ClEvent *ev) {
+79:    if (s->sink && s->sink->emit) s->sink->emit(s->sink->ctx, ev);
+80:}
+81:
+82:static void hash_vals(const uint64_t *v, uint32_t w, uint64_t *h1, uint64_t *h2) {
+83:    uint64_t a = 0x9E3779B97F4A7C15ULL, b = 0xC2B2AE3D27D4EB4FULL;
+84:    for (uint32_t i = 0; i < w; ++i) {
+85:        a = (a ^ v[i]) * 0x100000001B3ULL;
+86:        a ^= a >> 29;
+87:        b = (b + v[i]) * 0xFF51AFD7ED558CCDULL;
+88:        b ^= b >> 33;
+89:    }
+90:    *h1 = a;
+91:    *h2 = b;
+92:}
+93:
+94:/* true if an equivalent state with cost <= insns already exists */
+95:static bool equiv_seen(S *s, uint64_t h1, uint64_t h2, uint32_t insns) {
+240:
+241:    const uint64_t *probes = cl_probe_inputs();
+242:    Node *root = &s.nodes[0];
+243:    root->id = 0;
+244:    root->parent = UINT32_MAX;
+245:    root->op = UINT16_MAX;
+246:    for (uint32_t k = 0; k < s.n; ++k) s.vals[k] = s.inputs[k];
+247:    for (uint32_t k = 0; k < W_PROBES; ++k) s.vals[s.n + k] = probes[k];
+248:    uint64_t h1, h2;
+249:    hash_vals(s.vals, s.w, &h1, &h2);
+250:    equiv_seen(&s, h1, h2, 0);
+251:    s.count = 1;
+252:
+253:    uint32_t next_id = 1;
+254:    size_t level_start = 0, level_end = 1;
+255:    int best_matches = -1;
+256:    uint32_t best_node = 0, best_parent = 0;
+257:    uint16_t best_op = 0;
+258:    uint32_t robust_need = cfg.robust_min_pct ? (s.n * cfg.robust_min_pct + 99) / 100 : UINT32_MAX;
+259:
+260:    for (uint32_t depth = 1; depth <= cfg.max_depth && !s.stop; ++depth) {
+261:        size_t level_kept = 0;
+262:        for (size_t pi = level_start; pi < level_end && !s.stop; ++pi) {
+263:            res->expansions++;
+264:            for (size_t oi = 0; oi < bank->count && !s.stop; ++oi) {
+265:                if (res->generated >= cfg.max_candidates) {
+266:                    s.stop = true;
+267:                    break;
+268:                }
+269:                res->generated++;
+270:                const Node *parent = &s.nodes[pi];
+271:                const ClOp *op = &bank->ops[oi];
+272:                ClEvent ev = {CL_EV_EXPAND, CL_PRUNE_NONE, CL_VERIFY_NOT_REACHED, CL_FIT_NONE, (uint16_t)oi,
+273:                              parent->id, next_id++, 0, 0};
+274:                uint32_t nsteps = parent->nsteps + op->steps.n;
+275:                uint32_t insns = parent->insns + op_insns(op);
+276:                if (nsteps > CL_MAX_STEPS) {
+277:                    ev.prune = CL_PRUNE_STEP_CAP;
+278:                    emit(&s, &ev);
+279:                    continue;
+280:                }
+281:                if (insns + 1 > cfg.max_program_insns) {
+282:                    ev.prune = CL_PRUNE_COST;
+283:                    res->pruned_cost++;
+284:                    emit(&s, &ev);
+285:                    continue;
+286:                }
+287:                const uint64_t *pv = &s.vals[pi * s.w];
+288:                for (uint32_t k = 0; k < s.w; ++k) scratch[k] = cl_steps_eval(&op->steps, pv[k]);
+289:                ev.exec_cost = s.w;
+290:                hash_vals(scratch, s.w, &h1, &h2);
+291:                if (equiv_seen(&s, h1, h2, insns)) {
+292:                    ev.prune = CL_PRUNE_EQUIV;
+293:                    res->pruned_equiv++;
+294:                    emit(&s, &ev);
+295:                    continue;
+296:                }
+297:                res->evaluated++;
+298:                uint32_t mismatch = 0;
+299:                for (uint32_t k = 0; k < s.n; ++k)
+300:                    if ((scratch[k] & s.mask) != crumb->out[k][0]) mismatch++;

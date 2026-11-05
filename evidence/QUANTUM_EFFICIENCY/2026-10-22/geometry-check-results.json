@@ -1,0 +1,60 @@
+{
+  "provenance": "Transcription of actual WolframLanguageEvaluator RawJSON result for geometry-check.wl; not a device benchmark",
+  "tetrahedron_direction_Gram": [
+    [
+      1,
+      -0.3333333333333333,
+      -0.3333333333333333,
+      -0.3333333333333333
+    ],
+    [
+      -0.3333333333333333,
+      1,
+      -0.3333333333333333,
+      -0.3333333333333333
+    ],
+    [
+      -0.3333333333333333,
+      -0.3333333333333333,
+      1,
+      -0.3333333333333333
+    ],
+    [
+      -0.3333333333333333,
+      -0.3333333333333333,
+      -0.3333333333333333,
+      1
+    ]
+  ],
+  "four_component_hybrid_Gram": [
+    [
+      1,
+      0,
+      0,
+      0
+    ],
+    [
+      0,
+      1,
+      0,
+      0
+    ],
+    [
+      0,
+      0,
+      1,
+      0
+    ],
+    [
+      0,
+      0,
+      0,
+      1
+    ]
+  ],
+  "zero_channel_fraction": 0.546875,
+  "dense_three_projection_bytes": 3145728,
+  "zero_channel_payload_bytes": 1720320,
+  "remaining_channels": 232,
+  "rank64_ideal_factor_payload_reduction_BF16_vs_FP8_percent": 68.75
+}

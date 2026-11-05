@@ -1,0 +1,16 @@
+{
+  "static_probe_rows": 3,
+  "sparsity_rows": 5,
+  "repository_inventory": 11,
+  "mechanism_families": 17,
+  "sources": 16,
+  "decoder_oracle": "PASS",
+  "byte_replay": "PASS",
+  "inference_quality": "NOT_RUN",
+  "performance": "NOT_RUN",
+  "energy": "NOT_RUN",
+  "production_changes": false,
+  "independent_human_probe_review": "NOT_RUN",
+  "publication": "branch only; Renda integration L596",
+  "doctrine_check": "PASS: exact 30-file closure on Spark, no stderr; Mac parser-error attempt retained as INVALID"
+}

@@ -1,0 +1,14 @@
+{
+  "verdict": "PASS",
+  "finite_fp8_codes_compared": 254,
+  "signed_zero_checked": true,
+  "nan_codes_refused": [
+    127,
+    255
+  ],
+  "transform_controls": "PASS: independent explicit Hadamard, inverse, zero/constant quantizer, rank-one control",
+  "numpy": "2.5.4",
+  "ml_dtypes": "0.6.0",
+  "probe_sha256": "a5ddde5624e7e5d0621d6380e90d76082093b910e5558b3caafe514ef9339618",
+  "scope": "Independent library FP8 oracle plus synthetic controls, not inference quality or speed"
+}

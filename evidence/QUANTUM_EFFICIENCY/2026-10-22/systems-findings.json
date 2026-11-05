@@ -1,0 +1,94 @@
+{
+  "audit": "L582 read-only systems/AIEN_0 efficiency audit",
+  "scope": "Aienux storage/crypto, Omega search-equivalence hooks, AIEN_0 training readiness. No inference-kernel or literature audit.",
+  "canonical_pins": {
+    "aienux": {"remote": "git@github.com:aien-dev/aienux.git", "main": "18e276590424593647cd7c39c6d16c2f9f8d6027", "inspected": "origin/main source via Spark checkout"},
+    "aien-train": {"remote": "git@github.com:aien-dev/aien-train.git", "main": "ed8b6ea2562efdda7913234ca8f34b443714a987", "aien0/m20": "ed8b6ea2562efdda7913234ca8f34b443714a987", "inspected": "canonical main; AIEN_0 worktree absent on Spark"},
+    "omega-mv": {"remote": "git@github.com:aien-dev/omega-mv.git", "main": "a8ffd2b912c84197d08f963b05f9c7d8b30a3f8a", "inspected": "fresh ls-remote pin; tracked local source copy older, so no current-main code-line claim beyond prior review"}
+  },
+  "findings": [
+    {
+      "id": "SYS-AIENUX-STORE-REHASH",
+      "title": "Store boot validates the same objects repeatedly",
+      "status": "existing efficiency-review finding; not a new proposal",
+      "evidence": ["aienux@18e276590424593647cd7c39c6d16c2f9f8d6027 native/kernel/svc/store_boot.c:269-274 calls unkeyed st_open then ss_open; recovery keyslot path calls ss_keyslot_bootstrap at :485", "2026-10-21 efficiency review G4-os-1: store_engine.c validates both slots by reading/hashing objects; sealed verification and keyslot bootstrap add more passes"],
+      "opportunity": "Reuse a single validated immutable-object digest/result across slot comparison and sealed-record checks where the trust boundary permits. Keep separate authentication and structural validation semantics; do not accept a cached result across changed bytes or an untrusted generation.",
+      "exactness": "Potentially exact if reuse is keyed to the validated content/object identity and validity scope; no implementation equivalence established here.",
+      "owner": "No owner listed in prior review; route via coordinator before any patch.",
+      "cheapest_discriminator": "Instrument dev_read count and SHA-256 input bytes in the QEMU store gate on the same populated image; compare current path with a read-only in-memory validation-result cache. Measure mount latency separately; all timings UNKNOWN.",
+      "quantitative_status": "Prior review's 5x ordinary / 7x keyslot-path reduction is a structural pass-count derivation, not a measured boot speedup."
+    },
+    {
+      "id": "SYS-AIENUX-STORE-IO",
+      "title": "Store serializes extent I/O as synchronous 4 KiB unit calls",
+      "status": "existing efficiency-review finding; driver improvement exists on a non-main branch",
+      "evidence": ["aienux@18e276590424593647cd7c39c6d16c2f9f8d6027 native/store/store_engine.c:71-105 reads one unit per dev_read; :330-343 writes one unit per dev_write", "prior review G4-os-2 says driver queue depth 32/direct DMA is in L199 branch, while Store caller still issues one synchronous unit per call"],
+      "opportunity": "Add extent/batched transfer at the Store boundary and preserve per-object hash, zero-padding, error ordering, and crash semantics. The disk queue-depth driver alone cannot help if this layer submits one command then waits.",
+      "exactness": "Exact data/result semantics are possible; request ordering and partial-I/O failure behavior must be preserved and tested.",
+      "owner": "L199 owns the NVMe driver; Store-layer change had no owner in G4-os-2. Coordinator should assign only after checking present ownership.",
+      "cheapest_discriminator": "On a copied QEMU Store image, count commands for a multi-unit extent and replay identical read/write/crash tests. Prior L199 branch reported 1,021.5 vs 7,877.4 MB/s at QD1/QD31 in QEMU; that is not Spark SSD evidence and not the Store-layer gain.",
+      "quantitative_status": "Prior 7.71x ratio is driver QEMU read-throughput data, not a measured Store speedup; Spark result UNKNOWN."
+    },
+    {
+      "id": "SYS-AIENUX-X25519-FIELD",
+      "title": "X25519's 16x16 limb multiply is much wider than the existing 5-limb field implementation",
+      "status": "existing efficiency-review finding; source path confirmed at canonical main pin",
+      "evidence": ["aienux@18e276590424593647cd7c39c6d16c2f9f8d6027 native/net/x25519.c:42-54 performs 16x16 limb products and uses multiplication for squaring", "prior review G4-os-6 locates Ed25519's five-limb field implementation at native/sig/ed25519.c:22,74-97"],
+      "opportunity": "Consider a shared audited field representation or a dedicated five-limb X25519 implementation, reusing before rebuilding. Same prime supports the algebraic transformation; representation, reduction, constant-time behavior, and RFC 7748 edge cases still need proof.",
+      "exactness": "Exact modular arithmetic is required; this is not an approximation. A count of 256 vs 25 limb products (10.24x) does not imply that speed ratio.",
+      "owner": "No owner listed in G4-os-6; coordinator must reconcile current crypto owners first.",
+      "cheapest_discriminator": "Host differential against the existing implementation over RFC 7748 vectors plus boundary/random inputs, then native handshake timing on Spark; report timing only with a receipt.",
+      "quantitative_status": "10.24x fewer inner products is operation-count arithmetic from the prior review. End-to-end handshake speedup UNMEASURED."
+    },
+    {
+      "id": "SYS-AIENUX-ED25519-JOINT",
+      "title": "Ed25519 verification performs two independent scalar-multiplication loops",
+      "status": "existing efficiency-review finding; implementation not verified here",
+      "evidence": ["aienux@18e276590424593647cd7c39c6d16c2f9f8d6027 native/sig/ed25519.c:248-263 defines a fixed 256-step scalar multiplication; :545-548 invokes it for [S]B and [k]A"],
+      "opportunity": "Use a public-input joint double-scalar multiplication (shared doubling loop) for verification, retaining the existing path as a differential oracle and keeping signing constant-time. Signature verification result must remain exact.",
+      "exactness": "Exact group result, not lossy; signature verification uses public signature/key inputs. Keep canonical encoding and rejection checks unchanged.",
+      "owner": "No owner listed in G4-os-7; check current ownership before assigning.",
+      "cheapest_discriminator": "Run RFC 8032 valid/invalid vectors and differential randomized signatures on host; then time verify-only batch on Spark with identical inputs.",
+      "quantitative_status": "Prior 2.29x count of group operations is an algebraic estimate; wall-clock gain UNKNOWN."
+    },
+    {
+      "id": "OMEGA-QUOTIENT-SEARCH",
+      "title": "Search already has equivalence pruning; AIEN_0 should learn ordering over equivalence classes, not rediscover duplicate states",
+      "status": "existing mechanism; promising measurement gap, avoid duplicate implementation",
+      "evidence": ["omega-mv canonical main pin from git ls-remote: a8ffd2b912c84197d08f963b05f9c7d8b30a3f8a", "available Omega source copy reports src/crumbline/cl_search.c:249,290 hashes states and :265 applies candidate cutoff; source copy is an older worktree, not treated as canonical-main proof", "prior L303 brief identifies src/searchtrace and spec/searchtrace/M23_SEARCH_TRACE_CORPUS_V1.md as built trace-corpus code; trace format records ST_PRUNE_EQUIV and a dedup task setting"],
+      "opportunity": "Treat each exact-equivalence class as one search state and train/rank its representatives. Reuse the existing hash/equivalence and M23 trace corpus. First quantify duplicate-prune share and solved-at-equal-verification-budget by task; do not build a second hash-cons/e-graph layer unless current code shows an uncovered equivalence relation.",
+      "exactness": "Equivalence pruning must be exact for the declared observations. Learned score/order is approximate and may change which candidates fit a finite budget; the verifier remains authoritative and outside the model.",
+      "owner": "L303 owns AIEN_0/M23 training integration; L049 is the plan-reuse campaign. Parent/coordinator routes follow-on, no duplicate worker.",
+      "cheapest_discriminator": "Replay frozen task set with equivalence dedup on/off and current order, count exact equivalence-pruned candidates, verifier calls, solved tasks and first-solution cost. No model load or timing needed for initial counts.",
+      "quantitative_status": "Corpus/task counts and benefit UNKNOWN in this audit; no corpus gate or benchmark run."
+    },
+    {
+      "id": "AIEN0-ONCHIP-RANKER",
+      "title": "AIEN_0 is a small synthesis-policy ranker, but no canonical implementation/evaluation was present",
+      "status": "active existing L303 objective; not a new training proposal; completion not demonstrated",
+      "evidence": ["aien-train canonical main ed8b6ea2562efdda7913234ca8f34b443714a987: README.md:3-7 says pre-alpha, Omega/no-CUDA path, claims must link source or receipt; docs/PLAN.md:12 prohibits third-party training framework in product path", "aien0/m20 remote ref resolves to the same ed8b6ea2562efdda7913234ca8f34b443714a987; expected Spark worktree ~/workspace/aien-train-aien0 was absent; no AIEN_0 artifact/status was found in canonical tracked main", "L303 brief: rank next Omega operation from synthesis traces; oracle training then M21/M22 path; held-out equal-verification-budget search test; model size guided by L279", "L303 remains open in ~/handoffs/LEDGER.tsv"],
+      "opportunity": "Prioritize a compact candidate scorer that ranks operations/states using only decision-time features. Evaluate imitation, pairwise ranking and value heads on the same frozen tasks, then compare learned order against current/random/cheapest-first at equal verifier budget. This is search-control efficiency, not a replacement verifier.",
+      "exactness": "The learned policy is approximate and can miss solutions under finite budget. Correctness stays exact only because Omega's verifier decides acceptance; report solve-rate/regret separately from semantic correctness.",
+      "owner": "L303; no duplicate implementation or worker. Coordinate status recovery with parent and do not close ledger.",
+      "cheapest_discriminator": "Read-only first: recover the already-assigned worktree/handoff and inspect source/status. Then perform non-timed held-out task counts for existing order vs random vs cheapest-first vs scorer at one fixed verifier-call budget. Do not load a model or run hardware measurements for this audit.",
+      "quantitative_status": "No AIEN_0 trained weights, train receipt, held-out advantage, or energy result verified. UNKNOWN, not a negative result."
+    },
+    {
+      "id": "AIEN0-TRAIN-STATE-TRADEOFF",
+      "title": "Training-state compression is a separate lossy tradeoff; optimizer-pass reuse is the exact first lever",
+      "status": "existing L304 design notes from prior review; AIEN_0 applicability unproven",
+      "evidence": ["aien-train@ed8b6ea2562efdda7913234ca8f34b443714a987 README.md:5 frames weight-residency as a thesis under test; repo is pre-alpha and has no training code in canonical main", "prior efficiency review G5-physics-train-6/7 and ledger L304 describe 28 B/parameter/step for one illustrative fused AdamW layout, plus a 1.4x byte reduction using BF16 m/v states"],
+      "opportunity": "For any implemented trainer, first accumulate microbatches and execute one fused optimizer update per chosen token batch; avoid repeating the same state read/write per microbatch. Evaluate BF16 optimizer state only as a separately labelled lossy experiment after exact FP32 baseline exists.",
+      "exactness": "Optimizer-update frequency changes training trajectory; low-precision m/v is lossy. Neither is algebraically identical to full-precision per-microbatch updates. Do not transfer LLM-scale crossover numbers to AIEN_0 without its parameter count, batch, shapes and measured bandwidth.",
+      "owner": "L304 owns training target; L279 physics and L294 kernel backlog. Use their existing owners/receipts, do not open duplicate work.",
+      "cheapest_discriminator": "Once an AIEN_0 training executable exists, compare exact same-seed short runs for fused vs reference FP32 updates, check parameter/optimizer-state equality, then measure bytes and elapsed time. Only after this control, compare BF16-state held-out ranking quality.",
+      "quantitative_status": "Prior 626-token crossover and 2.07x example are derived from an illustrative optimizer layout and external ceiling inputs, not measured or transferable to AIEN_0. AIEN_0 gains UNKNOWN."
+    }
+  ],
+  "coverage_limits": [
+    "Read-only audit only. No builds, corpus generation, measurements, model loads, process changes, launches, or product edits.",
+    "No Interplane/protocol, CI-agent-control, CUDApp, inference-kernel, literature, or Wolfram audit; parent/other researchers own those lanes.",
+    "Omega canonical main pin was fetched by ls-remote, but a fresh checkout at that pin was not available; line-level Omega source claims are explicitly marked older copy / prior brief rather than asserted as current-main findings.",
+    "No ledger item closed."
+  ]
+}

@@ -1,0 +1,184 @@
+{
+  "verdict": "PARTIAL: feasibility evidence on three selected matrices, NOT model accuracy or speed",
+  "scope": "Frozen predetermined first/middle/last layer and expert selection; not random or representative; existing FP8 checkpoint, not BF16 original. No timings collected.",
+  "model_path": "/home/drakestapleton/models/qwen3.6-35b-a3b-fp8-95a723d0",
+  "python": "3.14.7 (main, Aug  7 2026, 02:15:30) [Clang 22.1.3 ]",
+  "numpy": "2.5.4",
+  "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+  "controls": "PASS: independent explicit Hadamard, inverse, zero/constant quantizer, rank-one control",
+  "selection": [
+    [
+      0,
+      0,
+      "gate_proj"
+    ],
+    [
+      20,
+      128,
+      "up_proj"
+    ],
+    [
+      39,
+      255,
+      "down_proj"
+    ]
+  ],
+  "rows": [
+    {
+      "layer": 0,
+      "expert": 0,
+      "projection": "gate_proj",
+      "shape": [
+        512,
+        2048
+      ],
+      "provenance": {
+        "model.language_model.layers.0.mlp.experts.0.gate_proj.weight": {
+          "meta": {
+            "dtype": "F8_E4M3",
+            "shape": [
+              512,
+              2048
+            ],
+            "data_offsets": [
+              36094720,
+              37143296
+            ]
+          },
+          "sha256": "81e8478424044de8eb00b884f24aaf93d65f8a402f4bc788a96b7d6da6212838"
+        },
+        "model.language_model.layers.0.mlp.experts.0.gate_proj.weight_scale_inv": {
+          "meta": {
+            "dtype": "BF16",
+            "shape": [
+              4,
+              16
+            ],
+            "data_offsets": [
+              336384,
+              336512
+            ]
+          },
+          "sha256": "7320b35f20afd6aec789e56d2b1196db917166c70c63f6799ef849631df28cdc"
+        }
+      },
+      "numerical_rank_tol_maxdim_eps": 232,
+      "rank_relative_frobenius_error": {
+        "64": 0.6085668140383202,
+        "128": 0.39290277776350513,
+        "204": 0.15022797722044212,
+        "256": 2.726992561599816e-16,
+        "409": 1.735532769329465e-32
+      },
+      "toy_int4_relative_frobenius_error": 0.1383513133179477,
+      "block_hadamard_toy_int4_relative_frobenius_error": 0.11681424038387736,
+      "rotation_error_ratio": 0.8443305493994437,
+      "same_dtype_rank64_entry_ratio": 0.15625,
+      "bf16_rank64_vs_fp8_dense_byte_ratio_no_metadata": 0.3125
+    },
+    {
+      "layer": 20,
+      "expert": 128,
+      "projection": "up_proj",
+      "shape": [
+        512,
+        2048
+      ],
+      "provenance": {
+        "model.language_model.layers.20.mlp.experts.128.up_proj.weight": {
+          "meta": {
+            "dtype": "F8_E4M3",
+            "shape": [
+              512,
+              2048
+            ],
+            "data_offsets": [
+              140952320,
+              142000896
+            ]
+          },
+          "sha256": "2eb5db2c68b4b32e0c3ecd50fc23ffc188c249af6faa95d649e85f983c8dfb35"
+        },
+        "model.language_model.layers.20.mlp.experts.128.up_proj.weight_scale_inv": {
+          "meta": {
+            "dtype": "BF16",
+            "shape": [
+              4,
+              16
+            ],
+            "data_offsets": [
+              349184,
+              349312
+            ]
+          },
+          "sha256": "833922ba739ded0ef99869b70c9de5af06cc3984a0a7abc5ef88ece3580dc1f4"
+        }
+      },
+      "numerical_rank_tol_maxdim_eps": 512,
+      "rank_relative_frobenius_error": {
+        "64": 0.8560844464246313,
+        "128": 0.7334438779093878,
+        "204": 0.5998930960862606,
+        "256": 0.5132895354057629,
+        "409": 0.2643392913747219
+      },
+      "toy_int4_relative_frobenius_error": 0.11992096585246871,
+      "block_hadamard_toy_int4_relative_frobenius_error": 0.11723490818079317,
+      "rotation_error_ratio": 0.9776014339729382,
+      "same_dtype_rank64_entry_ratio": 0.15625,
+      "bf16_rank64_vs_fp8_dense_byte_ratio_no_metadata": 0.3125
+    },
+    {
+      "layer": 39,
+      "expert": 255,
+      "projection": "down_proj",
+      "shape": [
+        2048,
+        512
+      ],
+      "provenance": {
+        "model.language_model.layers.39.mlp.experts.255.down_proj.weight": {
+          "meta": {
+            "dtype": "F8_E4M3",
+            "shape": [
+              2048,
+              512
+            ],
+            "data_offsets": [
+              548520576,
+              549569152
+            ]
+          },
+          "sha256": "452a5b320745342feb9f93e0c1b641d63aa892ceee304fe16af9a3c7b261c43b"
+        },
+        "model.language_model.layers.39.mlp.experts.255.down_proj.weight_scale_inv": {
+          "meta": {
+            "dtype": "BF16",
+            "shape": [
+              16,
+              4
+            ],
+            "data_offsets": [
+              70912,
+              71040
+            ]
+          },
+          "sha256": "5d0212b017d91d54f82cb7ad0c796dde1bd03638c5ca285586c847b5db6d0463"
+        }
+      },
+      "numerical_rank_tol_maxdim_eps": 512,
+      "rank_relative_frobenius_error": {
+        "64": 0.7771349973363622,
+        "128": 0.6325733663918888,
+        "204": 0.49053763737893785,
+        "256": 0.4054657685639438,
+        "409": 0.18803231011918795
+      },
+      "toy_int4_relative_frobenius_error": 0.12973330661223093,
+      "block_hadamard_toy_int4_relative_frobenius_error": 0.11705831097961823,
+      "rotation_error_ratio": 0.9022996024413539,
+      "same_dtype_rank64_entry_ratio": 0.15625,
+      "bf16_rank64_vs_fp8_dense_byte_ratio_no_metadata": 0.3125
+    }
+  ]
+}

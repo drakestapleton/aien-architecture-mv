@@ -1,0 +1,197 @@
+{
+  "version": 1,
+  "sources": [
+    {
+      "id": 1,
+      "url": "https://arxiv.org/abs/quant-ph/0301063v2",
+      "title": "Efficient classical simulation of slightly entangled quantum computations",
+      "accessed": "2026-10-22",
+      "quotes": [
+        {
+          "text": "We present a scheme to efficiently simulate, with a classical computer, the dynamics of multipartite quantum systems on which the amount of entanglement (or of correlations in the case of mixed-state dynamics) is conveniently restricted.",
+          "added": "2026-10-22"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "url": "https://arxiv.org/abs/1807.04271",
+      "title": "A quantum-inspired classical algorithm for recommendation systems",
+      "accessed": "2026-10-22",
+      "quotes": [
+        {
+          "text": "As a consequence, Kerenidis and Prakash’s algorithm does not in fact give an exponential speedup over classical algorithms.",
+          "added": "2026-10-22"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "url": "https://arxiv.org/abs/0811.3171",
+      "title": "Quantum algorithm for linear systems of equations",
+      "accessed": "2026-10-22",
+      "quotes": [
+        {
+          "text": "Here, we exhibit a quantum algorithm for this task",
+          "added": "2026-10-22"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "url": "https://arxiv.org/abs/1806.01838",
+      "title": "Quantum singular value transformation and beyond: exponential improvements for quantum matrix arithmetics",
+      "accessed": "2026-10-22",
+      "quotes": [
+        {
+          "text": "that can apply polynomial transformations to the singular values of a block of a unitary",
+          "added": "2026-10-22"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "url": "https://arxiv.org/abs/quant-ph/0005055",
+      "title": "Quantum Amplitude Amplification and Estimation",
+      "accessed": "2026-10-22",
+      "quotes": [
+        {
+          "text": "We show that this quadratic speedup can also be obtained for a large family of search problems for which good classical heuristics exist.",
+          "added": "2026-10-22"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "url": "https://arxiv.org/abs/quant-ph/0209131",
+      "title": "Exponential algorithmic speedup by quantum walk",
+      "accessed": "2026-10-22",
+      "quotes": [
+        {
+          "text": "We construct an oracular (i.e., black box) problem that can be solved exponentially faster on a quantum computer than on a classical computer. The quantum algorithm is based on a continuous time quantum walk, and thus employs a different technique from previous quantum algorithms based on quantum Fourier transforms.",
+          "added": "2026-10-22"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "url": "https://arxiv.org/abs/2404.00456",
+      "title": "QuaRot: Outlier-Free 4-Bit Inference in Rotated LLMs",
+      "accessed": "2026-10-22",
+      "quotes": [
+        {
+          "text": "without changing the output, making quantization easier.",
+          "added": "2026-10-22"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "url": "https://arxiv.org/abs/2307.13304",
+      "title": "QuIP: 2-Bit Quantization of Large Language Models With Guarantees",
+      "accessed": "2026-10-22",
+      "quotes": [
+        {
+          "text": "QuIP consists of two steps: (1) an adaptive rounding procedure minimizing a quadratic proxy objective; (2) efficient pre- and post-processing that ensures weight and Hessian incoherence via multiplication by random orthogonal matrices.",
+          "added": "2026-10-22"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "url": "https://arxiv.org/abs/1304.3061",
+      "title": "A variational eigenvalue solver on a quantum processor",
+      "accessed": "2026-10-22",
+      "quotes": [
+        {
+          "text": "We present an alternative approach that greatly reduces the requirements for coherent evolution and we combine this method with a new approach to state preparation based on ansätze and classical optimization. We have implemented the algorithm by combining a small-scale photonic quantum processor with a conventional computer.",
+          "added": "2026-10-22"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "url": "https://www.nature.com/articles/s41586-024-08449-y",
+      "title": "Quantum error correction below the surface code threshold",
+      "accessed": "2026-10-22",
+      "quotes": [
+        {
+          "text": "However, this exponential suppression only occurs if the physical error rate is below a critical threshold.",
+          "added": "2026-10-22"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "url": "https://www.cs.princeton.edu/courses/archive/fall06/cos576/papers/bennett73.html",
+      "title": "Logical Reversibility of Computation",
+      "accessed": "2026-10-22",
+      "quotes": [
+        {
+          "text": "This result is of great physical interest because it makes plausible the existence of thermodynamically reversible computers which could perform useful computations at useful speed while dissipating considerably less than k T of energy per logical step.",
+          "added": "2026-10-22"
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "url": "https://arxiv.org/abs/quant-ph/0212023",
+      "title": "Quantum Information and Relativity Theory",
+      "accessed": "2026-10-22",
+      "quotes": [
+        {
+          "text": "Special relativity imposes severe restrictions on the transfer of information between distant systems.",
+          "added": "2026-10-22"
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "url": "https://arxiv.org/abs/quant-ph/0208112",
+      "title": "Creating superpositions that correspond to efficiently integrable probability distributions",
+      "accessed": "2026-10-22",
+      "quotes": [
+        {
+          "text": "We give a simple and efficient process for generating a quantum superposition of states which form a discrete approximation of any efficiently integrable (such as log concave) probability density functions.",
+          "added": "2026-10-22"
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "url": "https://doi.org/10.1126/science.273.5278.1073",
+      "title": "Universal Quantum Simulators",
+      "accessed": "2026-10-22",
+      "quotes": [
+        {
+          "text": "any local quantum system, is shown to be correct.",
+          "added": "2026-10-22"
+        }
+      ]
+    },
+    {
+      "id": 15,
+      "url": "https://www.physics.ucsb.edu/~martinisgroup/papers/Ronnow2014.pdf",
+      "title": "Defining and detecting quantum speedup",
+      "accessed": "2026-10-22",
+      "quotes": [
+        {
+          "text": "Comparing the performance of the device on random spin glass instances with limited precision to simulated classical and quantum annealers, we find no evidence of quantum speedup when the entire data set is considered, and obtain inconclusive results when comparing subsets of instances on an instance-by-instance basis.",
+          "added": "2026-10-22"
+        }
+      ]
+    },
+    {
+      "id": 16,
+      "url": "https://arxiv.org/abs/quant-ph/0109047",
+      "title": "Efficient Classical Simulation of Continuous Variable Quantum Information Processes",
+      "accessed": "2026-10-22",
+      "quotes": [
+        {
+          "text": "For a collection of harmonic oscillators, any quantum process that begins with unentangled Gaussian states, performs only transformations generated by Hamiltonians that are quadratic in the canonical operators, and involves only measurements of canonical operators (including finite losses) and suitable operations conditioned on these measurements can be simulated efficiently on a classical computer.",
+          "added": "2026-10-22"
+        }
+      ]
+    }
+  ]
+}
