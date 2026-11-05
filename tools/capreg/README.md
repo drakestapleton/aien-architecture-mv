@@ -68,3 +68,20 @@ AIEN_OMC="$omc" ../../tests/gates/run.sh capreg
 Exit codes: 0 pass; 1 the register (or view) fails a rule, one `FAIL line N: rule` per finding on
 stderr; 3 NOT_RUN (evidence mode with a missing clone); 64 usage; 65 register unreadable or over
 500000 bytes; 100 + code on a trap. Capacities: 1024 records, a 999000-byte view.
+
+## Where the gate runs
+
+`tests/gates/arch-capability-register.gate` says `requires: - host`: it needs the pinned AArch64 omc
+of `../zero-legacy/omega.pin`. Without `AIEN_OMC`, `run.sh capreg` exits 3 (NOT_RUN).
+
+- **Hosted CI, every PR and every push to main:** the `AIEN Pinned-omc Gates` job of
+  `.github/workflows/aien-verification.yml` runs on an `ubuntu-24.04-arm` runner. It checks out the
+  omega-mv commit named in `omega.pin`, births omc from seed-0 with `sh seed/omega-from-seed.sh`,
+  refuses a compiler whose sha256 differs from `omc_sha256`, and runs `tests/gates/run.sh capreg`
+  (with `doctrine`, `zero-legacy` and `script-tests`). A red or NOT_RUN step fails the job. Like the
+  rest of that workflow it is advisory: main requires no status check.
+- **The hosted AIEN Checks job** (x86) runs only `crumb verify` and the gates that require only
+  `portable`, so it never runs this gate.
+- **On the Spark:** `AIEN_OMC=<pinned omc> tests/gates/run.sh capreg`, and `aien-alpha
+  aien-architecture <sha>`, which runs every gate. A hosted run is a run on GitHub's AArch64 runner,
+  not a signed Spark receipt.

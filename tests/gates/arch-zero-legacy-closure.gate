@@ -1,5 +1,5 @@
 # tests/gates/arch-zero-legacy-closure.gate
-# #316: seeded .om closure checker refuses the hostile fixture tree and accepts the clean one (no hosted job)
+# #316: seeded .om closure checker refuses the hostile fixture tree and accepts the clean one (hosted: AIEN Pinned-omc Gates on ubuntu-24.04-arm)
 gate: ARCH-ZERO-LEGACY-CLOSURE
 manifest_version: 2
 owner: aien-architecture

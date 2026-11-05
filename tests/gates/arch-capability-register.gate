@@ -1,5 +1,5 @@
 # tests/gates/arch-capability-register.gate
-# seeded .om checker accepts the CUDA capability register and its view, refuses 22 bad fixtures and a planted row (no hosted job)
+# seeded .om checker accepts the CUDA capability register and its view, refuses 22 bad fixtures and a planted row (hosted: AIEN Pinned-omc Gates on ubuntu-24.04-arm)
 gate: ARCH-CAPABILITY-REGISTER
 manifest_version: 2
 owner: aien-architecture

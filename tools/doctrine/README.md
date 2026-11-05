@@ -65,8 +65,9 @@ commands stop on failure rather than falling through to an older gate binary.
 `gate.om` exits 3 when the compiler's native sha256 differs from `omega.pin`; otherwise its exit
 is the checker's (0/1/2) and it prints `AIEN-OBS doctrine_sha256 "<sha256 of build/doctrine>"`
 before the run and `AIEN-OBS doctrine_exit N` after it. The gate manifest
-`tests/gates/arch-doctrine.gate` is `requires: host` (the compiler is AArch64 only); the hosted
-x86 job can no longer run it and sees NOT_RUN until the base ref carries that manifest.
+`tests/gates/arch-doctrine.gate` is `requires: host` (the compiler is AArch64 only), so the hosted
+x86 AIEN Checks job skips it. The hosted `AIEN Pinned-omc Gates` job runs it on an
+`ubuntu-24.04-arm` runner with omc born from seed-0 at the `omega.pin` commit (#363).
 
 ## Oracle and corpus
 
@@ -121,8 +122,9 @@ the script's own stderr line, which is identical.
 - `ROOT` defaults to `.`; the script defaulted to its own parent directory, which a program with
   no fixed location cannot know.
 
-NOT_RUN: nothing in this directory has been run under the hosted x86 workflow (AArch64 compiler
-only); `aien-test run ARCH-DOCTRINE` was not run here, only `tests/gates/run.sh doctrine`.
+NOT_RUN: nothing in this directory runs under the hosted x86 workflow (AArch64 compiler only);
+`aien-test run ARCH-DOCTRINE` was not run here, only `tests/gates/run.sh doctrine`, which is also
+what the hosted AArch64 job runs.
 
 ## Bootstrap rejection regression (NOT_RUN)
 

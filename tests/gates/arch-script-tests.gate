@@ -1,6 +1,6 @@
 # tests/gates/arch-script-tests.gate
 # Mirrors hosted: offline tests of scripts/pr-gate.sh, rebase-crumb.sh and the seeded .om candidate checkers
-# tools/candidate/check_candidate.om, check_pins.om with their parity corpus (not a hosted job; NOT_RUN without the pinned AIEN_OMC)
+# tools/candidate/check_candidate.om, check_pins.om with their parity corpus (hosted: AIEN Pinned-omc Gates on ubuntu-24.04-arm; NOT_RUN without the pinned AIEN_OMC)
 gate: ARCH-SCRIPT-TESTS
 manifest_version: 2
 owner: aien-architecture

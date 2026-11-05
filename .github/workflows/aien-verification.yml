@@ -4,9 +4,16 @@
 # qualifies Alpha builds instead: the local pipeline pushes annotated tags alpha/YYYYMMDD.N.
 #   AIEN Checks (pull_request, push to main): advisory. crumb verify, then for enrolled repos
 #     (.aien/verify.pub on origin/main) the portable smoke set named at origin/main.
+#   AIEN Pinned-omc Gates (pull_request, push to main): advisory. On a hosted AArch64 runner, births
+#     the omc pinned in tools/zero-legacy/omega.pin from seed-0 and runs the host gates that need only
+#     that compiler: ARCH-CAPABILITY-REGISTER, ARCH-DOCTRINE, ARCH-ZERO-LEGACY-CLOSURE and
+#     ARCH-SCRIPT-TESTS (#363).
 #   AIEN Alpha (push of an alpha/* tag): the tagged commit must be on main; its signed Spark bundle
 #     from aien-receipts must verify (--require-full) against the trust anchors on origin/main.
-# GitHub-hosted compute builds only the pinned verifier tools, never this repository's code.
+# GitHub-hosted compute builds only the pinned verifier tools, never this repository's code, with two
+# exceptions that are checkers, not shipped code: the crumb tool, and the seeded .om checkers that the
+# pinned omc compiles in the pinned-omc job. That omc is born from seed-0 with no C toolchain, and every
+# gate refuses it unless it hashes as omega.pin says.
 name: AIEN
 
 on:
@@ -99,9 +106,8 @@ jobs:
           cd "$GITHUB_WORKSPACE"
           git status --porcelain --untracked-files=normal
 
-      # ARCH-DOCTRINE is `requires: host` since #316 (tools/doctrine/doctrine.om needs the pinned
-      # AArch64 omc); on this x86 runner its step exits 3 = NOT_RUN. It leaves this set once the
-      # base ref carries that manifest.
+      # ARCH-DOCTRINE and the other gates that need the pinned AArch64 omc are `requires: host`, so
+      # they stay out of this set; the pinned-omc job below runs them on an AArch64 runner.
       - name: Portable smoke set (gates whose requires is only portable, named at the base ref)
         if: steps.anchors.outputs.enrolled == 'true'
         run: |
@@ -122,6 +128,69 @@ jobs:
             if timeout 600 aien-test run "$g" --evidence-dir "$RUNNER_TEMP/evidence"; then echo "$g: PASS"; else echo "::error::$g: not PASS"; fail=1; fi
             echo "::endgroup::"
           done
+          exit $fail
+
+  pinned-omc-gates:
+    name: AIEN Pinned-omc Gates
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
+    # The seed chain and omc write AArch64 Linux ELF, so this job needs an arm64 runner.
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    steps:
+      - name: Checkout the head under test
+        uses: actions/checkout@v4
+
+      # The pin is read from the head under test because the gates check AIEN_OMC against that same
+      # file; a PR that moves the pin is tested with the compiler it names.
+      - name: Read the compiler pin (tools/zero-legacy/omega.pin)
+        id: pin
+        run: |
+          pin=tools/zero-legacy/omega.pin
+          repo=$(sed -n 's|^repo: .*github\.com[:/]\(.*\)\.git$|\1|p' "$pin")
+          commit=$(sed -n 's/^commit: //p' "$pin")
+          omc_sha256=$(sed -n 's/^omc_sha256: //p' "$pin")
+          printf '%s' "$commit" | grep -Eqx '[0-9a-f]{40}' || { echo "::error::$pin: commit is not 40 hex"; exit 1; }
+          printf '%s' "$omc_sha256" | grep -Eqx '[0-9a-f]{64}' || { echo "::error::$pin: omc_sha256 is not 64 hex"; exit 1; }
+          [ -n "$repo" ] || { echo "::error::$pin: no github.com repo"; exit 1; }
+          echo "repo=$repo" >> "$GITHUB_OUTPUT"
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "omc_sha256=$omc_sha256" >> "$GITHUB_OUTPUT"
+          echo "omc pin: $repo@$commit, omc sha256 $omc_sha256"
+
+      - name: Checkout the pinned Omega seed (${{ steps.pin.outputs.repo }} @ ${{ steps.pin.outputs.commit }})
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.pin.outputs.repo }}
+          ref: ${{ steps.pin.outputs.commit }}
+          path: .omega-seed
+
+      - name: Birth omc from seed-0 outside the candidate tree and check its hash
+        run: |
+          mv .omega-seed "$RUNNER_TEMP/omega-seed"
+          cd "$RUNNER_TEMP/omega-seed"
+          sh seed/omega-from-seed.sh
+          have=$(sha256sum seed/out/omc | cut -d' ' -f1)
+          if [ "$have" != "${{ steps.pin.outputs.omc_sha256 }}" ]; then
+            echo "::error::seed-born omc hashes $have, omega.pin pins ${{ steps.pin.outputs.omc_sha256 }}"
+            exit 1
+          fi
+          echo "AIEN_OMC=$RUNNER_TEMP/omega-seed/seed/out/omc" >> "$GITHUB_ENV"
+          cd "$GITHUB_WORKSPACE"
+          git status --porcelain --untracked-files=normal
+
+      # Each step is the `run:` of its manifest under tests/gates/. Exit 3 is NOT_RUN and fails
+      # this job, since the pinned compiler is present here.
+      - name: Host gates that need only the pinned omc
+        run: |
+          fail=0
+          for step in capreg doctrine zero-legacy script-tests; do
+            echo "::group::run.sh $step"
+            rc=0
+            timeout 600 bash tests/gates/run.sh "$step" || rc=$?
+            echo "::endgroup::"
+            if [ "$rc" -eq 0 ]; then echo "$step: PASS"; else echo "::error::$step: exit $rc, not PASS"; fail=1; fi
+          done
+          git status --porcelain --untracked-files=normal
           exit $fail
 
   alpha:
