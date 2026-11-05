@@ -8,7 +8,7 @@
 - [ ] This PR documents remaining unrun/failed gates.
 - [ ] Issue ledger will be reconciled when this PR merges.
 
-See [`docs/process/ISSUE_FIRST_DELIVERY.md`](docs/process/ISSUE_FIRST_DELIVERY.md).
+See [`docs/process/ISSUE_FIRST_DELIVERY.md`](https://github.com/aien-dev/aien-architecture-mv/blob/main/docs/process/ISSUE_FIRST_DELIVERY.md).
 
 ## Architecture change
 

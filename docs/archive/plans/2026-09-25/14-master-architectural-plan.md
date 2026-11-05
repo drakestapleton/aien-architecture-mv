@@ -2,7 +2,7 @@
 >
 > Original path: `docs/14-master-architectural-plan.md`
 >
-> Archived on 2026-09-27 during plan consolidation. The active cross-project execution plan is [CURRENT_EXECUTION_PLAN.md](../../../CURRENT_EXECUTION_PLAN.md), governed by [PLAN_AUTHORITY.md](../../../PLAN_AUTHORITY.md).
+> Archived on 2026-09-27 during plan consolidation. The active cross-project execution plan is [CURRENT_EXECUTION_PLAN.md](../../../../CURRENT_EXECUTION_PLAN.md), governed by [PLAN_AUTHORITY.md](../../../../PLAN_AUTHORITY.md).
 >
 > Retained for provenance only.
 
