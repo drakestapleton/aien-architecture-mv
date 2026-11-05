@@ -45,6 +45,6 @@ Open an issue when:
 
 ## Crumbs
 
-This repo uses the Crumb Protocol (RFC-0001). Each directory carries a `.crumb` file (what the directory is for, its rules, and a backfilled history). Live coordination between agents goes in `.crumb.local`, which is never committed.
+This repo uses the Crumb Protocol (RFC-0001). Each directory carries a `.crumb` file (what the directory is for, its rules, and a backfilled history). Agents on one machine may keep local scratch state in `.crumb.local`, which is never committed; coordination between agents goes through tracked claims and draft pull requests (see Scope in `docs/CRUMB_PROTOCOL.md`).
 Before editing a directory, read its `.crumb`. Rules and the `crumb` tool: https://github.com/aien-spark/aien-architecture/blob/main/docs/CRUMB_PROTOCOL.md
 Backfilled history (marked as such, not live whispers) is in `docs/crumbs/BACKFILL.md`.

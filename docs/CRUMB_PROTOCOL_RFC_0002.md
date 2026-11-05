@@ -97,6 +97,7 @@ Two agents pointed at two different coordination roots each believe they hold th
 - Reads merge: shared store first, then any `.crumb.local` present in the invoking worktree; an unexpired legacy scent or lock is shown with `legacy:` and an `imported_from: <worktree path>` provenance. Legacy state never overrides a newer shared record for the same key.
 - `crumb seed` / first shared write in a directory imports an existing `.crumb.local` once (provenance kept) and leaves the file on disk; nothing is deleted.
 - `.gitignore` handling for `.crumb.local` stays, for the transition and for non-repository directories.
+- Scope: `.crumb.local` and the shared store are single-machine scratch state, not a coordination channel between agents; cross-agent claims go through the issue tracker and draft pull requests (see Scope in `docs/CRUMB_PROTOCOL.md`).
 
 ## 5. Continuation Crumb (`ContinuationCrumbV1`)
 

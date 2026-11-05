@@ -28,6 +28,8 @@ RFC-0003 (`docs/CRUMB_PROTOCOL_RFC_0003.md`) adds the Crumb Compiler: structural
 - `.crumb`: durable, committed, JSON. Required: `schema_version` ("1.0.0"), `name`, `purpose`. Optional: `layer`, `above`, `below`, `invariants`, `exports`, `extensions`.
 - `.crumb.local`: ephemeral, never committed (must be in `.gitignore`). Fields: `schema_version`, `directory`, `active_scents`, `locks`, `whispers`, `history`, `extensions`.
 
+Scope. `.crumb.local` and the RFC-0002 shared store are single-machine scratch state. They are advisory and visible only to processes on the machine that wrote them. They are not a coordination channel between agents: cross-agent claims and handoffs go through the issue tracker (a claimed issue) and draft pull requests. Tools must not report a crumb lock as a claim.
+
 Spec-faithful mapping for a lane: a lane is an agent id; "I am working here" is a scent plus a lock; "done" is releasing the lock and writing a history vector plus a whisper. The spec has no ticket state machine (no open/claim/done status), and this tool adds none.
 
 ## What every agent must do
