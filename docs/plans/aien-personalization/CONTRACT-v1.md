@@ -7,7 +7,7 @@ Part of the finite workstream in `README.md` (not a master plan). Issue: aien-sp
 | Concept | Owner | Stored where | Never |
 |---|---|---|---|
 | Identity | Aienux provisions; host `aien-allen` resolves (read only; rename to `aien-subject` planned) | SubjectState kind 24 in the Aienux Store, host pin `<home>.allen-binding` (rename to `<home>.aien-binding` planned) | Created or edited by host or frontend code. A display name is not identity. |
-| Persona profile | New host crate `aien-allen-profile` is the only writer (rename to `aien-subject-profile` planned) | `<home>.allen-profile/` beside the binding file (rename to `<home>.aien-profile/` planned) | A second copy that claims to be current. Caches carry the revision and refuse identity mismatch. |
+| Persona profile | Host crate `aien-allen-profile` (ships on sovereign-core main) is the only writer (rename to `aien-subject-profile` planned) | `<home>.allen-profile/` beside the binding file (rename to `<home>.aien-profile/` planned) | A second copy that claims to be current. Caches carry the revision and refuse identity mismatch. |
 | Working preferences | Same profile record | Same store | Treated as permissions or as facts from model output. |
 | Standing intent | Aienux (SubjectState) | Subject intents (v0: `GOAL_LATENCY` only) | Written by the profile. Not covered by v1 (see AUDIT-v1). |
 | Memory | Cortex (ARCH-0022) | Cortex journal | Duplicated into the profile. The profile holds no memory content. |

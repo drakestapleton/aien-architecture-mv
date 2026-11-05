@@ -25,8 +25,6 @@ HARDWARE ACTS.
 EVIDENCE TEACHES.
 ```
 
-Allen has now evolved into the final Aien (2026-10-26).
-
 Aienux owns the trusted operating substrate beneath this loop.
 
 ## 2. Current baseline
@@ -1001,7 +999,7 @@ The "Status 2026-10-10: NOT_RUN" line of the 2026-10-10 addendum above is supers
 
 ## Addendum 2026-10-12: AIEN native v1, frozen scope, candidate pins and the N1 to N7 ledger (P01)
 
-Drake's goal set of 2026-10-12: **finish line: AIEN/ALLEN operates on the physical DGX Spark under Aienux, with no Linux kernel, userspace service, NVIDIA Linux RM/UVM driver, or Linux recovery environment required for the delivered workflow.** (Allen has now evolved into the final Aien (2026-10-26).) Development hosts and reference measurements are separate from this runtime requirement. This addendum records the grounded delivery plan he handed over (twelve work packages P01 to P12, seven gates N1 to N7), freezes the candidate pins, and resolves four document conflicts. It does not raise any milestone status. The native order of the 2026-10-08 (late) addendum is unchanged; the gates below are that order, named.
+Drake's goal set of 2026-10-12: **finish line: AIEN/ALLEN operates on the physical DGX Spark under Aienux, with no Linux kernel, userspace service, NVIDIA Linux RM/UVM driver, or Linux recovery environment required for the delivered workflow.** Development hosts and reference measurements are separate from this runtime requirement. This addendum records the grounded delivery plan he handed over (twelve work packages P01 to P12, seven gates N1 to N7), freezes the candidate pins, and resolves four document conflicts. It does not raise any milestone status. The native order of the 2026-10-08 (late) addendum is unchanged; the gates below are that order, named.
 
 ### Candidate pins (read from GitHub main on 2026-10-12 ~03:40Z; every N gate receipt names these or a later pinned successor)
 

@@ -69,8 +69,6 @@ ATLAS AWAKENS.  ALLEN INTENDS.  AIEN PROPOSES.  OMEGA DEFINES.  FORGE REALIZES.
 AEGIS VERIFIES.  HARDWARE ACTS.  EVIDENCE TEACHES.
 ```
 
-Allen has now evolved into the final Aien (2026-10-26).
-
 | Repository | Role |
 | :--- | :--- |
 | [aienux](https://github.com/aien-dev/aienux) | Aienux, the kernel of AienOS, intended to replace the Linux kernel on the DGX Spark |

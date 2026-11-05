@@ -270,8 +270,6 @@ Sign-off Hash:           4a8b79e13d964fcf81ec0a1f9e2b1735cb0e4871d87a2cf956102a9
 > **`HARDWARE ACTS.`**  
 > **`EVIDENCE TEACHES.`**
 
-Allen has now evolved into the final Aien (2026-10-26).
-
 ### 4.2 The Three Speeds of Intelligence
 1. **Fast Learning (AIEN Model / Search Prior):** *"What should I try next?"* Implicit, speculative intuition. Search prior over Omega's possibility space. Rapidly retrainable and disposable.
 2. **Medium-Term Learning (Omega Procedure Library):** *"What reusable procedures have we discovered?"* Explicit, typed, composable, verifiable semantic subgraphs.

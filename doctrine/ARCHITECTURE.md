@@ -76,8 +76,6 @@ $$\begin{aligned}
 \mathbf{EVIDENCE\ TEACHES.} &\quad \text{Empirical receipts record ground truth for autonomous learning.}
 \end{aligned}$$
 
-Allen has now evolved into the final Aien (2026-10-26).
-
 No layer may perform the duty of another. Aien cannot dictate physical register allocations; Forge cannot reason about high-level goals; Omega cannot violate physical memory bounds; Atlas cannot remain active after handoff; Aegis does not filter thought, but verifies execution integrity and contracts.
 
 ---
@@ -98,8 +96,6 @@ HARDWARE ACTS.
 
 EVIDENCE TEACHES.
 ```
-
-Allen has now evolved into the final Aien (2026-10-26).
 
 ### 1.4 The Permanent Separation
 

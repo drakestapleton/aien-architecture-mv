@@ -284,7 +284,7 @@ code is copied):
 | DGX Spark | GB10 (sm_121) | GB10 backend, the head-to-head | reachable; GPU per lock rules |
 | macbook | Apple M2, 10 GPU cores, Metal 4 (Darwin 25.6.0) | Metal backend; MoltenVK | reachable over SSH |
 | hub | Raspberry Pi 5, V3D, `/dev/dri/renderD128` | Vulkan on real hardware via Mesa v3dv | reachable; no Vulkan ICD installed |
-| iMac | AMD Polaris 10 (1002:67df rev c5, gfx803) | AMD driver-client bring-up only (pre-CDNA ISA; ROCm support for gfx803 ended [INFERENCE]) | offline at probe (SSH timeout, ping 100% loss); boots Allen firmware |
+| iMac | AMD Polaris 10 (1002:67df rev c5, gfx803) | AMD driver-client bring-up only (pre-CDNA ISA; ROCm support for gfx803 ended [INFERENCE]) | offline at probe (SSH timeout, ping 100% loss); boots the aienux firmware-hosted UEFI app, which keeps the name Allen (its Omega port is draft aienux#495), not a host OS with an AMD driver |
 | GitHub `ubuntu-24.04-arm` | lavapipe, CPU | Vulkan and CPU-reference CI | available |
 | Rented MI300X | gfx942, 192 GB HBM3, discrete | AMD backend qualification | not rented; Drake's gate |
 

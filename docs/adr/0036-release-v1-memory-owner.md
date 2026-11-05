@@ -21,7 +21,7 @@ The dry run showed the mechanism already exists and works when engaged; what fai
 ## Consequences
 
 - aien-sovereign-core#386 repair: remember and recall refusals when not engaged; harness engagement; the append budget fix.
-- `ACCEPTANCE_E2E.md` is frozen and names "the store named by lane L3"; this ADR is that name. The E4 receipt field `memory_store` is `aien-allen-memory` (rename of that value to `aien-subject-memory` planned).
+- `ACCEPTANCE_E2E.md` is frozen and names "the store named by lane L3"; this ADR is that name. The E4 receipt field `memory_store` names `aien-allen-memory` (rename of that value to `aien-subject-memory` planned).
 - A future ADR may add memory for an un-engaged installation; it is not on the v1 critical path.
 
 ## Not decided here
