@@ -3,15 +3,16 @@
 # Uses only temp lock files and a temp window root; never touches /tmp/aien-quiet.lock
 # or /tmp/aien-gb10.lock.
 #   case 1 (no contention): opens fast.
-#   case 2 (one shared holder, plain flock -s, no pause): opens within LIMIT seconds.
-#     One holder still leaves a gap, which is the L189 path.
+#   case 2 (one shared holder through $SPARK_QUIET_GATE, no pause): opens within LIMIT.
+#     Deterministic for the same reason as case 3: the gate keeps the holder's next turn out.
 #   case 3 (two shared holders through $SPARK_QUIET_GATE, no pause): opens within LIMIT.
-#     Same order as quiet-build, so the gate at spark-window L322 keeps new holders out
-#     and the drain finishes. This is the case the default run treats as deterministic.
-#   case 4 (chip busy): waits for the chip, then opens.
-#   case 5 (two plain flock -s holders, no gate): known-starvable. Linux flock gives an
-#     exclusive waiter no priority, so two holders with no gap can starve the window.
-#     Skipped unless SPARK_STARVE_PLAIN=1.
+#     Same order as quiet-build, so the gate at spark-window:330-336 keeps new holders out
+#     and the drain finishes.
+#   case 4 (chip busy, one gated shared holder): waits for the chip, then opens.
+#   case 2p (one plain flock -s holder, no gate) and case 5 (two plain flock -s holders,
+#     no gate) run only with SPARK_STARVE_PLAIN=1. Linux flock gives an exclusive waiter no
+#     priority: one plain holder leaves only a process-start gap (the L189 path), so whether
+#     the window wins it depends on timing; two holders with no gap can starve the window.
 # Exit 0 = every case that ran passed (a skip is not a failure). Pass an older script path to see it fail (red).
 set -u
 S=${1:-$(dirname "$0")/spark-window}; LIMIT=${LIMIT:-60}
@@ -54,12 +55,12 @@ case_run() {  # LABEL: open under the running streams
   else echo "FAIL $1: no window in $LIMIT s under shared quiet holders back to back"; fail=1; fi
   close_it; stop_streams
 }
-stream_plain 1.0 0
-case_run "case 2 one holder, no pause between holders"
+stream_gated 1.0 0
+case_run "case 2 one holder through the quiet gate, no pause"
 stream_gated 0.9 0; stream_gated 0.6 0
 case_run "case 3 two holders through the quiet gate, no pause"
 # chip busy too: the window must wait for the chip, then open once it is free (no deadlock, no early open)
-stream_plain 1.0 0
+stream_gated 1.0 0
 ( flock -x "$SPARK_GB10_LOCK" sleep 6 ) & pids="$pids $!"; sleep 0.5; t0=$(date +%s)
 # the open time comes from the window's own held file, not from when this loop noticed it (the poll is slow on a loaded box)
 if opens_within "case 4 chip busy 6 s" "$LIMIT"; then
@@ -68,11 +69,14 @@ if opens_within "case 4 chip busy 6 s" "$LIMIT"; then
   else echo "FAIL case 4 chip busy 6 s: opened while the chip was held ($dt s)"; fail=1; fi
 else echo "FAIL case 4 chip busy 6 s: no window in $LIMIT s"; fail=1; fi
 close_it; stop_streams
-# Two plain flock -s holders, no gate. Known-starvable: opt in with SPARK_STARVE_PLAIN=1.
+# Plain flock -s holders, no gate: timing-dependent (one) or known-starvable (two). Opt in with SPARK_STARVE_PLAIN=1.
 if [ "${SPARK_STARVE_PLAIN:-}" = 1 ]; then
+  stream_plain 1.0 0
+  case_run "case 2p timing-dependent: one plain flock -s holder, no gate"
   stream_plain 0.9 0; stream_plain 0.6 0
   case_run "case 5 known-starvable: two plain flock -s holders, no gate"
 else
+  echo "SKIP case 2p timing-dependent: one plain flock -s holder, no gate (set SPARK_STARVE_PLAIN=1 to run)"
   echo "SKIP case 5 known-starvable: two plain flock -s holders, no gate (set SPARK_STARVE_PLAIN=1 to run)"
 fi
 exit $fail
