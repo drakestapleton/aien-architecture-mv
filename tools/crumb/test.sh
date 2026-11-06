@@ -303,6 +303,10 @@ else echo "NOT_RUN C3 differential (jq or crumb-compile.sh missing)"; fi
 # Same scripted session in the same path with the pre-#234 tool (built from BASE) and this tool, unregistered and
 # registered: stdout of claim/update/whisper/close/sniff/list and every dirs/ and agents/ record must match byte for
 # byte once ISO timestamps and heartbeat ages are masked. Only STORE_ID (and the stderr dry-run line) is new.
+# crumb924 added lease generations (fencing tokens): the " generation N" suffix of CLAIMED, each lease's "generation"
+# and the record's "generations" map are masked too (nogen: jq prints these records in the tool's own layout, so the
+# rest is still compared byte for byte); test-namespace.sh covers generations themselves.
+nogen() { jq 'del(.generations) | if (.locks | type) == "object" then .locks |= map_values(del(.generation)) else . end' "$1"; }
 BASE=e6e48a0
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null; unset CRUMB_COORD_ROOT CRUMB_EXPECT_STORE_ID CRUMB_STRICT_STORE_ID
 if git -C "$HERE" cat-file -e "$BASE:tools/crumb/crumb.c" 2>/dev/null; then
@@ -317,9 +321,9 @@ if git -C "$HERE" cat-file -e "$BASE:tools/crumb/crumb.c" 2>/dev/null; then
       "$1" update agent-a src "still on a"; "$1" whisper agent-a src agent-b "half done" high src/a.c
       (cd "$T/same-wb" && "$1" sniff agent-b src); "$1" close agent-b src a.c; echo "rc=$?"
       "$1" close agent-a src a.c modify "done"; (cd "$T/same-wb" && "$1" claim agent-b src a.c "my turn"); "$1" list .
-      (cd "$T/same-wb" && "$1" sniff agent-b src); } 2>"$2/stderr" | sed -E 's/[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z/TS/g; s/heartbeat [0-9-]+s/heartbeat Ns/g' > "$2/stdout"
+      (cd "$T/same-wb" && "$1" sniff agent-b src); } 2>"$2/stderr" | sed -E 's/[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z/TS/g; s/heartbeat [0-9-]+s/heartbeat Ns/g; s/ generation [0-9]+$//' > "$2/stdout"
     S=$(git rev-parse --absolute-git-dir)/crumb/v1
-    (cd "$S" && find dirs agents -type f | sort | while read -r f; do echo "== $f"; sed -E 's/[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z/TS/g' "$f"; done) > "$2/records"
+    (cd "$S" && find dirs agents -type f | sort | while read -r f; do echo "== $f"; case $f in dirs/*) nogen "$f";; *) cat "$f";; esac | sed -E 's/[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z/TS/g'; done) > "$2/records"
     [ -f "$S/STORE_ID" ] && cp "$S/STORE_ID" "$2/STORE_ID"
     cd "$T" || exit 1; rm -rf "$T/same" "$T/same-wb"
   }
