@@ -78,7 +78,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         if: steps.anchors.outputs.enrolled == 'true'
         with:
-          repository: aien-spark/aien-sovereign-core
+          repository: aien-dev/aien-sovereign-core-mv
           ref: ${{ env.AIEN_TEST_PIN }}
           path: .aien-test-src
       - name: Move pinned verifier source outside the candidate tree
@@ -238,7 +238,7 @@ jobs:
       - name: Checkout the pinned aien-test source (aien-sovereign-core @ ${{ env.AIEN_TEST_PIN }})
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          repository: aien-spark/aien-sovereign-core
+          repository: aien-dev/aien-sovereign-core-mv
           ref: ${{ env.AIEN_TEST_PIN }}
           path: .aien-test-src
       - name: Move pinned verifier source outside the candidate tree

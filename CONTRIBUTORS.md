@@ -9,7 +9,7 @@ Every model below did real work. A model is listed only for work it did. The orc
 | Claude Sonnet 5.5 | Orchestration and verification of worker output |
 | Codex (GPT-6.1 Sol) | Code review of numeric, R16 and torn-write recovery changes; PATH-1 reference module |
 | Gemini 3.8 Flash | Code review (including torn-write recovery and ADR 0021); PATH-0 specification; state audits |
-| Grok 4.7 | Math and statistics checks (assigned; no findings recorded yet) |
+| Grok 4.7 | Math and statistics checks (assigned; no findings recorded yet). Pinned `.github/workflows/aien-verification.yml` third-party actions to commit SHAs and pointed the aien-test checkouts at `aien-dev/aien-sovereign-core-mv`. |
 | GLM, DeepSeek, Kimi, Muse | Independent second reviews and drafting (assigned; update this table when they deliver) |
 
 Update this table in the same commit as the work it credits.
