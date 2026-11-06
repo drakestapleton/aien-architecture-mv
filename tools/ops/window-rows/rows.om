@@ -1,0 +1,578 @@
+note SPDX-License-Identifier: Apache-2.0
+note rows: check a GPU-window row ledger (ROWS.tsv, format window-rows v1).
+note usage: rows < ROWS.tsv
+note Seeded native Omega, built only by the compiler pinned in tools/zero-legacy/omega.pin.
+note Format and rules: tools/ops/window-rows/README.md and docs/ops/SPARK_TEST_SCHEDULE.md.
+note Line 1 is exactly "# window-rows v1". Every other line is one row of exactly 9 TAB
+note separated, non-empty fields: row issue repo sha window verdict lease p18091 receipt.
+note Exit 0 and one summary line on stdout when every row holds; exit 1 and one line
+note "rows: line N: REASON" on stderr at the first refused line.
+note Bound: input at most 131072 bytes; every loop below consumes at least one byte per pass.
+
+text twhy "header\nfields\nrow-id\nduplicate-row\nissue\nrepo\nsha\nwindow\nduplicate-window\nverdict\nlease\nlease-window\np18091\nreceipt\npass-needs-sha\npass-needs-lease\nfail-needs-sha\nexpired-pass\nno-final-newline\nline-too-long\ntoo-many-rows\nno-rows\ninput-too-large\nread-error\npass-needs-repo\nfail-needs-repo\n"
+text tkw "PASS\nFAIL\nNOT_RUN\nBLOCKED\nclosed\nexpired\nnone\ndown\nown:\nDRA-\n+p:\n# window-rows v1\n"
+text tpre "rows: line "
+text tsep ": "
+text tnl "\n"
+text tok "ROWS PASS rows="
+text tpa " pass="
+text tfa " fail="
+text tnr " not_run="
+text tbl " blocked="
+text tle " leases="
+
+const MAXB ulong 131072
+const MAXR ulong 255
+const MAXL ulong 512
+
+global buf uchar 131073
+global fs ulong 16
+global fe ulong 16
+global rs ulong 256
+global re ulong 256
+global ws ulong 256
+global we ulong 256
+global nb uchar 24
+global cnt ulong 8
+
+note cnt: 0 rows, 1 pass, 2 fail, 3 not_run, 4 blocked, 5 leases, 6 window ids stored
+
+note ---- output ----
+
+fn wnum v ulong fd int to void
+x = v
+n = ulong 0
+if eq x 0
+put nb 23 48
+n = 1
+end
+while gt x 0 bound 21
+put nb sub 23 n uchar add 48 rem x 10
+x = div x 10
+n = add n 1
+end
+r = write fd nb sub 24 n n
+end
+
+note write entry i of twhy (newline separated) to stderr
+fn why i ulong to void
+s = ulong 0
+k = ulong 0
+while lt k i bound 4096
+if eq get twhy s 10
+k = add k 1
+end
+s = add s 1
+end
+j = ulong 0
+while ne get twhy add s j 10 bound 64
+j = add j 1
+end
+r = write 2 twhy s j
+end
+
+fn fail ln ulong i ulong to void
+r = write 2 tpre 0 len tpre
+wnum ln 2
+r = write 2 tsep 0 len tsep
+why i
+r = write 2 tnl 0 1
+exit 1
+end
+
+note ---- byte classes ----
+
+fn isdig c uchar to bool
+ret and ge c 48 le c 57
+end
+
+fn ishex c uchar to bool
+d = and ge c 48 le c 57
+h = and ge c 97 le c 102
+ret or d h
+end
+
+note [a-z0-9._-]
+fn isid c uchar to bool
+l = and ge c 97 le c 122
+d = isdig c
+p = or eq c 46 or eq c 95 eq c 45
+ret or l or d p
+end
+
+note [A-Za-z0-9._-]
+fn isrepo c uchar to bool
+u = and ge c 65 le c 90
+i = isid c
+ret or u i
+end
+
+note ---- spans of buf ----
+
+note buf[s..e) equals entry k of tkw (newline separated):
+note 0 PASS, 1 FAIL, 2 NOT_RUN, 3 BLOCKED, 4 closed, 5 expired, 6 none, 7 down, 8 own:,
+note 9 DRA-, 10 +p:, 11 the header line without its newline
+fn eqk s ulong e ulong k ulong to bool
+a = ulong 0
+c = ulong 0
+while lt c k bound 4096
+if eq get tkw a 10
+c = add c 1
+end
+a = add a 1
+end
+n = ulong 0
+while ne get tkw add a n 10 bound 64
+n = add n 1
+end
+if ne sub e s n
+ret false
+end
+for i ulong n
+if ne get buf add s i get tkw add a i
+ret false
+end
+end
+ret true
+end
+
+fn isdash s ulong e ulong to bool
+if ne sub e s 1
+ret false
+end
+ret eq get buf s 45
+end
+
+fn same a ulong b ulong c ulong d ulong to bool
+n = sub b a
+if ne n sub d c
+ret false
+end
+for i ulong n
+if ne get buf add a i get buf add c i
+ret false
+end
+end
+ret true
+end
+
+note number of lowercase hex bytes from s, stopping at e
+fn hexrun s ulong e ulong to ulong
+i = s
+while lt i e bound 131073
+if not ishex get buf i
+break
+end
+i = add i 1
+end
+ret sub i s
+end
+
+note ---- fields ----
+
+fn okid s ulong e ulong to bool
+n = sub e s
+if or eq n 0 gt n 48
+ret false
+end
+for i ulong n
+if not isid get buf add s i
+ret false
+end
+end
+ret true
+end
+
+note DRA-<1..5 digits>
+fn okiss s ulong e ulong to bool
+n = sub e s
+if or lt n 5 gt n 9
+ret false
+end
+if not eqk s add s 4 9
+ret false
+end
+for i ulong sub n 4
+if not isdig get buf add add s 4 i
+ret false
+end
+end
+ret true
+end
+
+note - or owner/name, [A-Za-z0-9._-] around exactly one slash
+fn okrepo s ulong e ulong to bool
+if isdash s e
+ret true
+end
+n = sub e s
+if or lt n 3 gt n 100
+ret false
+end
+sl = ulong 0
+at = ulong 0
+for i ulong n
+c = get buf add s i
+if eq c 47
+sl = add sl 1
+at = i
+else
+if not isrepo c
+ret false
+end
+end
+end
+if ne sl 1
+ret false
+end
+ret and gt at 0 lt at sub n 1
+end
+
+note - or 7..40 lowercase hex, optionally +p:<8..64 hex> (sha256 of an applied patch)
+fn oksha s ulong e ulong to bool
+if isdash s e
+ret true
+end
+h = hexrun s e
+if or lt h 7 gt h 40
+ret false
+end
+p = add s h
+if eq p e
+ret true
+end
+if lt sub e p 3
+ret false
+end
+if not eqk p add p 3 10
+ret false
+end
+q = add p 3
+k = hexrun q e
+if or lt k 8 gt k 64
+ret false
+end
+ret eq add q k e
+end
+
+note - or a spark-window id: YYYYMMDDTHHMMSSZ-xxxxxx
+fn okwin s ulong e ulong to bool
+if isdash s e
+ret true
+end
+if ne sub e s 23
+ret false
+end
+for i ulong 8
+if not isdig get buf add s i
+ret false
+end
+end
+if ne get buf add s 8 84
+ret false
+end
+for j ulong 6
+if not isdig get buf add s add 9 j
+ret false
+end
+end
+if ne get buf add s 15 90
+ret false
+end
+if ne get buf add s 16 45
+ret false
+end
+h = hexrun add s 17 e
+ret eq h 6
+end
+
+note 1 PASS, 2 FAIL, 3 NOT_RUN, 4 BLOCKED, 0 refused
+fn verd s ulong e ulong to ulong
+for k ulong 4
+if eqk s e k
+ret add k 1
+end
+end
+ret 0
+end
+
+note 1 closed, 2 expired, 3 none, 0 refused
+fn lease s ulong e ulong to ulong
+for k ulong 3
+if eqk s e add k 4
+ret add k 1
+end
+end
+ret 0
+end
+
+note :18091 after the lease: down, or own:<12..64 hex> (digest of a frozen own-model manifest)
+fn okport s ulong e ulong to bool
+if eqk s e 7
+ret true
+end
+if lt sub e s 4
+ret false
+end
+if not eqk s add s 4 8
+ret false
+end
+q = add s 4
+k = hexrun q e
+if or lt k 12 gt k 64
+ret false
+end
+ret eq add q k e
+end
+
+note relative path, 1..96 bytes of [A-Za-z0-9._-/], no leading slash, no ".."
+fn okrec s ulong e ulong to bool
+n = sub e s
+if or eq n 0 gt n 96
+ret false
+end
+if eq get buf s 47
+ret false
+end
+pd = false
+for i ulong n
+c = get buf add s i
+r = isrepo c
+if not or r eq c 47
+ret false
+end
+if and pd eq c 46
+ret false
+end
+pd = eq c 46
+end
+ret true
+end
+
+note ---- one row ----
+
+note fill fs/fe with the TAB separated fields of buf[s..e); returns the count (16 = too many)
+fn split s ulong e ulong to ulong
+n = ulong 0
+put fs 0 s
+i = s
+while lt i e bound 131073
+if eq get buf i 9
+if ge n 15
+ret 16
+end
+put fe n i
+n = add n 1
+put fs n add i 1
+end
+i = add i 1
+end
+put fe n e
+ret add n 1
+end
+
+fn fnull f ulong to bool
+ret eq get fs f get fe f
+end
+
+note a row id (t 0) or window id (t 1) seen before, against the first k stored
+fn seen t ulong f ulong k ulong to bool
+for i ulong k
+if eq t 0
+if same get rs i get re i get fs f get fe f
+ret true
+end
+else
+if same get ws i get we i get fs f get fe f
+ret true
+end
+end
+end
+ret false
+end
+
+note fields 1..4 (row, issue, repo, sha); records the row id
+fn syntax1 ln ulong s ulong e ulong to void
+nf = split s e
+if ne nf 9
+fail ln 1
+end
+for f ulong 9
+if fnull f
+fail ln 1
+end
+end
+if not okid get fs 0 get fe 0
+fail ln 2
+end
+r = get cnt 0
+if seen 0 0 r
+fail ln 3
+end
+put rs r get fs 0
+put re r get fe 0
+if not okiss get fs 1 get fe 1
+fail ln 4
+end
+if not okrepo get fs 2 get fe 2
+fail ln 5
+end
+if not oksha get fs 3 get fe 3
+fail ln 6
+end
+end
+
+note fields 5, 8, 9 (window, p18091, receipt); records the window id
+fn syntax2 ln ulong to void
+if not okwin get fs 4 get fe 4
+fail ln 7
+end
+if not isdash get fs 4 get fe 4
+w = get cnt 6
+if seen 1 4 w
+fail ln 8
+end
+put ws w get fs 4
+put we w get fe 4
+put cnt 6 add w 1
+end
+if not okport get fs 7 get fe 7
+fail ln 12
+end
+if not okrec get fs 8 get fe 8
+fail ln 13
+end
+end
+
+note the rules between verdict v, lease l, window, sha and repo
+fn rules ln ulong v ulong l ulong to void
+wd = isdash get fs 4 get fe 4
+l3 = eq l 3
+if ne wd l3
+fail ln 11
+end
+sd = isdash get fs 3 get fe 3
+rd = isdash get fs 2 get fe 2
+if eq v 1
+if eq l 2
+fail ln 17
+end
+if sd
+fail ln 14
+end
+if rd
+fail ln 24
+end
+if ne l 1
+fail ln 15
+end
+end
+if eq v 2
+if sd
+fail ln 16
+end
+if rd
+fail ln 25
+end
+end
+end
+
+fn row ln ulong s ulong e ulong to void
+syntax1 ln s e
+v = verd get fs 5 get fe 5
+if eq v 0
+fail ln 9
+end
+l = lease get fs 6 get fe 6
+if eq l 0
+fail ln 10
+end
+syntax2 ln
+rules ln v l
+put cnt 0 add get cnt 0 1
+put cnt v add get cnt v 1
+if ne l 3
+put cnt 5 add get cnt 5 1
+end
+end
+
+note ---- main ----
+
+fn summary to void
+r = write 1 tok 0 len tok
+wnum get cnt 0 1
+r = write 1 tpa 0 len tpa
+wnum get cnt 1 1
+r = write 1 tfa 0 len tfa
+wnum get cnt 2 1
+r = write 1 tnr 0 len tnr
+wnum get cnt 3 1
+r = write 1 tbl 0 len tbl
+wnum get cnt 4 1
+r = write 1 tle 0 len tle
+wnum get cnt 5 1
+r = write 1 tnl 0 1
+end
+
+note read stdin into buf; returns the byte count, or exits refusing
+fn slurp to ulong
+n = ulong 0
+k = long 1
+while gt k 0 bound 131075
+k = read 0 buf n sub 131073 n
+if gt k 0
+n = add n ulong k
+end
+if ge n 131073
+k = long 0
+end
+end
+if lt k 0
+fail 0 23
+end
+if gt n MAXB
+fail 0 22
+end
+ret n
+end
+
+fn main to int
+n = slurp
+if lt n 17
+fail 1 0
+end
+if not eqk 0 16 11
+fail 1 0
+end
+if ne get buf 16 10
+fail 1 0
+end
+p = ulong 17
+ln = ulong 1
+while lt p n bound 131073
+ln = add ln 1
+q = p
+while lt q n bound 131073
+if eq get buf q 10
+break
+end
+q = add q 1
+end
+if eq q n
+fail ln 18
+end
+if gt sub q p MAXL
+fail ln 19
+end
+if ge get cnt 0 MAXR
+fail ln 20
+end
+row ln p q
+p = add q 1
+end
+if eq get cnt 0 0
+fail ln 21
+end
+summary
+ret 0
+end

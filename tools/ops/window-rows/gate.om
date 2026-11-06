@@ -1,0 +1,515 @@
+note SPDX-License-Identifier: Apache-2.0
+note gate: the window-rows gate runner, seeded native Omega (pattern of tools/capreg/gate.om).
+note usage: gate OMC          (run from tools/ops/window-rows; writes under build/)
+note Hashes OMC with the native sha256 (tools/zero-legacy/sha256.om) against
+note tools/zero-legacy/omega.pin, builds rows.om, then expects:
+note   rows < fixtures/good-<name>.tsv   exit 0, stdout equal to fixtures/good-<name>.out
+note   rows < fixtures/bad-<name>.tsv    exit 1, stdout empty, stderr equal to fixtures/bad-<name>.err
+note and prints AIEN-OBS lines. Exit 0 only when every expectation holds; 3 when OMC is missing
+note or does not match the pin (NOT_RUN); 1 otherwise.
+note The only thing outside this program is whoever compiled it (gate.sh).
+
+text tbl "rows.om\n../../zero-legacy/sha256.om\nbuild/rows\nbuild/sha256\n../../zero-legacy/omega.pin\nbuild\nbuild/omc.sha\nbuild/out.txt\nbuild/err.txt\nfixtures/good-\nfixtures/bad-\n.tsv\n.out\n.err\n"
+text tgood "min\n20261106\n"
+text tbad "crlf\nduplicate-row\nduplicate-window\nempty-field\nexpired-pass\nfail-needs-repo\nfail-needs-sha\nfields\nheader\nissue\nlease\nlease-no-window\nlease-unrecorded\nline-too-long\nno-final-newline\nno-rows\np18091-retired\np18091-short\np18091-unrecorded\npass-needs-lease\npass-needs-repo\npass-needs-sha\nreceipt-absolute\nreceipt-dotdot\nrepo\nrow-id\nsha-patch\nsha-short\nsha-upper\ntoo-many-rows\nverdict\nwindow\n"
+text tobs "AIEN-OBS "
+text tg1 "window_rows_good_ok "
+text tg2 "window_rows_good_total "
+text tb1 "window_rows_bad_refused "
+text tb2 "window_rows_bad_total "
+text tbadf "gate: fixture did not give its expected result: "
+text tnl "\n"
+text tuse "usage: gate OMC\n"
+text tnot "gate: OMC missing or not the pinned compiler (NOT_RUN)\n"
+text tcf "gate: compile failed\n"
+text tkey "omc_sha256: "
+
+const NGOOD ulong 2
+const NBAD ulong 32
+
+global omcp uchar 4096
+global omcl ulong 1
+global pk uchar 4096
+global pkn ulong 1
+global pkc ulong 1
+global arg uchar 512
+global argl ulong 1
+global fin uchar 512
+global finl ulong 1
+global fout uchar 512
+global foutl ulong 1
+global ferr uchar 512
+global ferl ulong 1
+global status uchar 4
+global pin uchar 4096
+global pinl ulong 1
+global sha uchar 128
+global nb uchar 24
+global fa uchar 65536
+global fan ulong 1
+global fb uchar 65536
+global fbn ulong 1
+
+note ---- text tables ----
+
+fn pick i ulong to void
+put argl 0 0
+atbl i
+end
+
+note append entry i of a newline separated table to arg; w 0 tbl, 1 tgood, 2 tbad
+fn aent w ulong i ulong to void
+s = ulong 0
+k = ulong 0
+while lt k i bound 4096
+c = uchar 0
+if eq w 0
+c = get tbl s
+end
+if eq w 1
+c = get tgood s
+end
+if eq w 2
+c = get tbad s
+end
+if eq c 10
+k = add k 1
+end
+s = add s 1
+end
+n = get argl 0
+j = ulong 0
+while lt j 256 bound 257
+c = uchar 10
+if eq w 0
+c = get tbl add s j
+end
+if eq w 1
+c = get tgood add s j
+end
+if eq w 2
+c = get tbad add s j
+end
+if eq c 10
+break
+end
+put arg add n j c
+j = add j 1
+end
+put argl 0 add n j
+end
+
+fn atbl i ulong to void
+aent 0 i
+end
+
+note arg = fixtures/<good-|bad-><name><ext>; w 1 good, 2 bad; ext 11 .tsv, 12 .out, 13 .err
+fn fixname w ulong i ulong ext ulong to void
+pick add 8 w
+aent w i
+atbl ext
+end
+
+note ---- packets for execprog ----
+
+fn pk0 to void
+put pkn 0 2
+put pkc 0 0
+end
+
+fn pka to void
+n = get pkn 0
+m = get argl 0
+put pk n uchar rem m 256
+put pk add n 1 uchar div m 256
+for i ulong m
+put pk add n add 2 i get arg i
+end
+put pkn 0 add n add 2 m
+c = add get pkc 0 1
+put pkc 0 c
+put pk 0 uchar rem c 256
+put pk 1 uchar div c 256
+end
+
+fn pkt i ulong to void
+pick i
+pka
+end
+
+fn pkomc to void
+for i ulong get omcl 0
+put arg i get omcp i
+end
+put argl 0 get omcl 0
+pka
+end
+
+fn keep dst ulong to void
+for j ulong get argl 0
+if eq dst 0
+put fin j get arg j
+end
+if eq dst 1
+put fout j get arg j
+end
+if eq dst 2
+put ferr j get arg j
+end
+end
+if eq dst 0
+put finl 0 get argl 0
+end
+if eq dst 1
+put foutl 0 get argl 0
+end
+if eq dst 2
+put ferl 0 get argl 0
+end
+end
+
+fn noio to void
+put finl 0 0
+put foutl 0 0
+put ferl 0 0
+end
+
+note ---- run the packet; stdin, stdout, stderr redirected when set; exit code or -1 ----
+
+fn child to void
+if gt get finl 0 0
+fd = fopen fin 0 get finl 0 0 0
+if lt fd 0
+exit 126
+end
+r = dupfd int fd 0 0
+end
+if gt get foutl 0 0
+fd = fopen fout 0 get foutl 0 577 420
+if lt fd 0
+exit 126
+end
+r = dupfd int fd 1 0
+end
+if gt get ferl 0 0
+fd = fopen ferr 0 get ferl 0 577 420
+if lt fd 0
+exit 126
+end
+r = dupfd int fd 2 0
+end
+r = execprog pk 0 get pkn 0
+exit 127
+end
+
+fn run to long
+pid = fork
+if lt pid 0
+ret -1
+end
+if eq pid 0
+child
+end
+r = waitpid int pid status 0 4 0
+if ne r pid
+ret -1
+end
+if ne get status 0 0
+ret -1
+end
+ret long get status 1
+end
+
+note ---- steps ----
+
+fn compile src ulong dst ulong to bool
+pk0
+pkomc
+noio
+pick src
+keep 0
+pick dst
+keep 1
+r = run
+if ne r 0
+ret false
+end
+pick dst
+r = chmod arg 0 get argl 0 493
+ret eq r 0
+end
+
+fn hashomc to bool
+pk0
+pkt 3
+pkomc
+noio
+pick 6
+keep 1
+r = run
+if ne r 0
+ret false
+end
+pick 6
+fd = fopen arg 0 get argl 0 0 0
+if lt fd 0
+ret false
+end
+k = read int fd sha 0 128
+c = fclose int fd
+ret ge k 64
+end
+
+fn loadpin to bool
+pick 4
+fd = fopen arg 0 get argl 0 0 0
+if lt fd 0
+ret false
+end
+r = read int fd pin 0 4096
+c = fclose int fd
+if le r 0
+ret false
+end
+put pinl 0 ulong r
+ret true
+end
+
+fn pinat p ulong to bool
+for j ulong 64
+if ne get pin add p j get sha j
+ret false
+end
+end
+ret true
+end
+
+note does sha[0..64) equal the 64 bytes after "omc_sha256: " in the pin
+fn pinok to bool
+n = get pinl 0
+m = len tkey
+if lt n add m 64
+ret false
+end
+e = sub n add m 64
+i = ulong 0
+while le i e bound 4096
+j = ulong 0
+while lt j m bound 16
+if ne get pin add i j get tkey j
+break
+end
+j = add j 1
+end
+if eq j m
+ret pinat add i m
+end
+i = add i 1
+end
+ret false
+end
+
+note read file arg into fa (w 0) or fb (w 1); false when unreadable or over 65535 bytes
+fn slurp w ulong to bool
+fd = fopen arg 0 get argl 0 0 0
+if lt fd 0
+ret false
+end
+n = ulong 0
+k = long 1
+while gt k 0 bound 65537
+if eq w 0
+k = read int fd fa n sub 65536 n
+else
+k = read int fd fb n sub 65536 n
+end
+if gt k 0
+n = add n ulong k
+end
+if ge n 65536
+k = long 0
+end
+end
+c = fclose int fd
+if or lt k 0 ge n 65536
+ret false
+end
+if eq w 0
+put fan 0 n
+else
+put fbn 0 n
+end
+ret true
+end
+
+fn sameab to bool
+n = get fan 0
+if ne n get fbn 0
+ret false
+end
+for i ulong n
+if ne get fa i get fb i
+ret false
+end
+end
+ret true
+end
+
+note rows < fixture w/i; stdout build/out.txt, stderr build/err.txt; the exit code
+fn rows w ulong i ulong to long
+pk0
+pkt 2
+noio
+fixname w i 11
+keep 0
+pick 7
+keep 1
+pick 8
+keep 2
+ret run
+end
+
+note good fixture i: exit 0 and stdout byte-equal to fixtures/good-<name>.out
+fn goodone i ulong to bool
+x = rows 1 i
+if ne x 0
+ret false
+end
+pick 7
+if not slurp 0
+ret false
+end
+fixname 1 i 12
+if not slurp 1
+ret false
+end
+ret sameab
+end
+
+note bad fixture i: exit 1, empty stdout, stderr byte-equal to fixtures/bad-<name>.err
+fn badone i ulong to bool
+x = rows 2 i
+if ne x 1
+ret false
+end
+pick 7
+if not slurp 0
+ret false
+end
+if ne get fan 0 0
+ret false
+end
+pick 8
+if not slurp 0
+ret false
+end
+fixname 2 i 13
+if not slurp 1
+ret false
+end
+ret sameab
+end
+
+note ---- output ----
+
+fn wnum v ulong to void
+x = v
+n = ulong 0
+if eq x 0
+put nb 23 48
+n = 1
+end
+while gt x 0 bound 21
+put nb sub 23 n uchar add 48 rem x 10
+x = div x 10
+n = add n 1
+end
+r = write 1 nb sub 24 n n
+end
+
+fn obsn k ulong v ulong to void
+r = write 1 tobs 0 len tobs
+if eq k 0
+r = write 1 tg1 0 len tg1
+end
+if eq k 1
+r = write 1 tg2 0 len tg2
+end
+if eq k 2
+r = write 1 tb1 0 len tb1
+end
+if eq k 3
+r = write 1 tb2 0 len tb2
+end
+wnum v
+r = write 1 tnl 0 1
+end
+
+fn report w ulong i ulong to void
+r = write 2 tbadf 0 len tbadf
+fixname w i 11
+r = write 2 arg 0 get argl 0
+r = write 2 tnl 0 1
+end
+
+fn main to int
+if lt argcnt 2
+r = write 2 tuse 0 len tuse
+ret 64
+end
+n = argread 1 omcp 0 4095
+if lt n 1
+r = write 2 tuse 0 len tuse
+ret 64
+end
+put omcl 0 ulong n
+pick 5
+r = makedir arg 0 get argl 0 493
+if not compile 1 3
+r = write 2 tnot 0 len tnot
+ret 3
+end
+if not loadpin
+r = write 2 tnot 0 len tnot
+ret 3
+end
+if not hashomc
+r = write 2 tnot 0 len tnot
+ret 3
+end
+if not pinok
+r = write 2 tnot 0 len tnot
+ret 3
+end
+if not compile 0 2
+r = write 2 tcf 0 len tcf
+ret 1
+end
+g = ulong 0
+for i ulong NGOOD
+if goodone i
+g = add g 1
+else
+report 1 i
+end
+end
+b = ulong 0
+for j ulong NBAD
+if badone j
+b = add b 1
+else
+report 2 j
+end
+end
+obsn 0 g
+obsn 1 NGOOD
+obsn 2 b
+obsn 3 NBAD
+if ne g NGOOD
+ret 1
+end
+if ne b NBAD
+ret 1
+end
+ret 0
+end

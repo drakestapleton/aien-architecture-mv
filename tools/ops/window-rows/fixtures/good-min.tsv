@@ -1,0 +1,7 @@
+# window-rows v1
+t1	DRA-118	aien-dev/CUDApp	b774723f537cec16a359fe082b8100317a5b5490	20261106T210908Z-2a35ca	PASS	closed	down	r1.md
+t2	DRA-125	aien-dev/aien-train	56cc887	20261107T010000Z-abcdef	FAIL	expired	own:0f3a9c2e7d41b5a8c6e09d1f2b3a4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d	cutover/r2.md
+t3	DRA-158	aien-dev/CUDApp	b774723f537cec16a359fe082b8100317a5b5490+p:12b5b2720f7558ae62256f4371fc2668c144807ef9ff37bfa9887f961fe83c5a	20261107T012000Z-000001	PASS	closed	own:0f3a9c2e7d41	r3.md
+t4	DRA-120	aien-dev/aien-train	-	20261107T014000Z-00000a	NOT_RUN	closed	down	r4.md
+t5	DRA-55	aien-dev/sovereign-intelligence	-	-	BLOCKED	none	down	r5.md
+t6	DRA-23	-	-	-	NOT_RUN	none	down	r6.md

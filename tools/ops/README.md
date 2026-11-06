@@ -11,10 +11,14 @@ How and when to use them: [docs/ops/MEASUREMENT_WINDOWS.md](../../docs/ops/MEASU
 | `test_spark_window_close.sh` | Offline test for the close rule above (scratch locks and folder, never the live windows) |
 | `test-spark-window-starve.sh` | Offline test, scratch locks and window root only. Case 1: no contention. Cases 2 and 3: one and two shared holders take `$SPARK_QUIET_GATE` and then the quiet lock, the quiet-build order, so the gate at `spark-window:330-336` keeps new holders out and the drain finishes. Case 4 (chip busy): with the chip lock held for 6 s, the window waits for the chip and opens only after it is free. Plain `flock -s` skips that gate: one plain holder leaves only a timing-dependent gap, and two can starve an exclusive waiter, because Linux flock gives the waiter no priority. Those plain-flock cases (2p, 5) are skipped unless `SPARK_STARVE_PLAIN=1` |
 | `spark-calibrate` | Per-window calibration: memcpy bandwidth (omega#583 probe) and 30 s idle power at the wall |
-| `spark-baseline` | Per-window 27B baseline: fixed 64-token streamed reply on 127.0.0.1:18091, decode tok/s and J/token |
+| `spark-baseline` | Per-window 27B baseline: fixed 64-token streamed reply on 127.0.0.1:18091, decode tok/s and J/token. **Retired 2026-11-06** (it measures outside weights; see `docs/ops/SPARK_TEST_SCHEDULE.md`); kept as history |
+| `window-rows/` | Seeded `.om` checker for the per-folder `ROWS.tsv` GPU-window receipt ledger (DRA-118); gate `window-rows/gate.sh` |
 | `spark-receipt` | Energy receipt for any command; now stamps `window_id` and `calibration` |
 | `quiet-measure` | Exclusive quiet lock for a measurement; runs directly inside its own open window |
 | `quiet-build` | CPU-heavy jobs. Waits for a live measurement flag (at most 1 min), then the quiet gate, then a shared quiet lock. The whole wait is capped at 25 min (`SPARK_BUILD_MAX_WAIT`, default 1500 s). If the lock is acquired in time, the command runs as given. Past the cap it runs at nice 19, with no lock and no core pinning, and the open window is marked shared machine (L405). Waits are logged |
+
+Checked 2026-11-06: the installed `~/.local/bin/spark-window` (sha256 `05723bbd…`) is not this copy
+(`01ac196e…`); it lacks the L162 bare-close ownership rule. Close windows by id until an operator reinstalls it.
 
 `SHA256SUMS` in this directory is the sha256 of each script. It lists bare file names, so check it from
 `tools/ops`: from the repository root, `(cd tools/ops && sha256sum -c SHA256SUMS)`. To check the copies

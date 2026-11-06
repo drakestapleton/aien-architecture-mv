@@ -1,5 +1,12 @@
 # Measurement windows and the shared base
 
+> **Correction 2026-11-06 (DRA-118).** The 27B/35B models on 127.0.0.1:18091 are retired and outside
+> weights are not used, so `spark-baseline 27b` and every "27B baseline" step below are historical: do not
+> run them. :18091 is either down or serves a frozen own Omega LLM manifest. The GPU turn order, the
+> :18091 recovery contract and the per-folder `ROWS.tsv` receipt ledger are in
+> [SPARK_TEST_SCHEDULE.md](SPARK_TEST_SCHEDULE.md). The installed `spark-window` lacked the L162 close rule
+> when checked that day, so close windows by id.
+
 Several agents measure on the one Spark at the same time. When three of them timed things in parallel
 on 2026-10-19, two of the three verdicts came back INCONCLUSIVE only because the box was loaded by the
 others. Drake's rule: build once, measure the shared parts once per window, and then each agent measures
