@@ -1,0 +1,305 @@
+note SPDX-License-Identifier: Apache-2.0
+note actpins: is every `uses:` of a GitHub workflow pinned to a full commit SHA? (aien-architecture-mv #370)
+note usage: actpins FILE...
+note exit 0 every uses: is pinned; 1 any is not; 64 usage; 65 a file cannot be read or holds 65535 bytes or more.
+note Pinned: `OWNER/REPO[/PATH]@REF` with REF exactly 40 lowercase hex (a commit SHA, which moving a tag
+note cannot change), `docker://IMAGE@sha256:` plus 64 lowercase hex, or `./PATH` (a local action read
+note from the checked-out tree). Anything else, such as `@v7`, `@main` or an empty value, is UNPINNED.
+note A line is a `uses:` line when, after blanks and an optional `- `, it starts with `uses:`; a line whose
+note first non-blank byte is `#` is a comment. The value may be quoted with ' or ".
+note Output: `UNPINNED FILE:LINE: VALUE` per finding, then `actpins: N uses, F unpinned` and
+note `actpins: PASS` or `actpins: FAIL`.
+
+text tuse "usage: actpins FILE...\n"
+text terr "actpins: cannot read, or 65535 bytes or more: "
+text tunp "UNPINNED "
+text tsum "actpins: "
+text tsu2 " uses, "
+text tsu3 " unpinned\n"
+text tpass "actpins: PASS\n"
+text tfail "actpins: FAIL\n"
+text tcol ":"
+text tcs ": "
+text tkey "uses:"
+text tdock "docker://"
+text tsha "sha256:"
+
+global fbuf uchar 65536
+global flen ulong 1
+global name uchar 4096
+global nlen ulong 1
+global nb uchar 24
+global nuses ulong 1
+global nbad ulong 1
+
+fn wnl to void
+put nb 0 10
+r = write 1 nb 0 1
+end
+
+fn wnum v ulong to void
+n = ulong 0
+if eq v 0
+put nb 23 48
+n = 1
+end
+x = v
+while gt x 0 bound 20
+put nb sub 23 n uchar add 48 rem x 10
+x = div x 10
+n = add n 1
+end
+r = write 1 nb sub 24 n n
+end
+
+note read argument k into name and its file into fbuf
+fn load k ulong to bool
+put flen 0 0
+put nlen 0 0
+n = argread k name 0 4095
+if lt n 1
+ret false
+end
+put nlen 0 ulong n
+fd = fopen name 0 ulong n 0 0
+if lt fd 0
+ret false
+end
+r = read int fd fbuf 0 65535
+x = fclose int fd
+if lt r 0
+ret false
+end
+if ge r 65535
+ret false
+end
+put flen 0 ulong r
+ret true
+end
+
+note fbuf at i, before e, starts with text tkey
+fn iskey i ulong e ulong to bool
+m = len tkey
+if gt add i m e
+ret false
+end
+for j ulong m
+if ne get fbuf add i j get tkey j
+ret false
+end
+end
+ret true
+end
+
+fn isdock i ulong e ulong to bool
+m = len tdock
+if gt add i m e
+ret false
+end
+for j ulong m
+if ne get fbuf add i j get tdock j
+ret false
+end
+end
+ret true
+end
+
+fn issha i ulong e ulong to bool
+m = len tsha
+if gt add i m e
+ret false
+end
+for j ulong m
+if ne get fbuf add i j get tsha j
+ret false
+end
+end
+ret true
+end
+
+fn isblank c ulong to bool
+if eq c 32
+ret true
+end
+ret eq c 9
+end
+
+note fbuf[s, e) is exactly m lowercase hex digits
+fn ishex s ulong e ulong m ulong to bool
+if ne sub e s m
+ret false
+end
+i = s
+while lt i e bound 65536
+c = ulong get fbuf i
+d = and ge c 48 le c 57
+h = and ge c 97 le c 102
+if not or d h
+ret false
+end
+i = add i 1
+end
+ret true
+end
+
+note the value fbuf[v, ve) is pinned
+fn pinned v ulong ve ulong to bool
+if ge v ve
+ret false
+end
+if eq get fbuf v 46
+if lt add v 1 ve
+if eq get fbuf add v 1 47
+ret true
+end
+end
+end
+a = ve
+i = v
+while lt i ve bound 65536
+if eq get fbuf i 64
+a = i
+end
+i = add i 1
+end
+if eq a ve
+ret false
+end
+r = add a 1
+if isdock v ve
+if not issha r ve
+ret false
+end
+ret ishex add r len tsha ve 64
+end
+ret ishex r ve 40
+end
+
+note judge the line fbuf[s, e) numbered ln
+fn line s ulong e ulong ln ulong to void
+p = s
+while lt p e bound 65536
+if not isblank ulong get fbuf p
+break
+end
+p = add p 1
+end
+if ge p e
+ret
+end
+if eq get fbuf p 35
+ret
+end
+if eq get fbuf p 45
+if lt add p 1 e
+if isblank ulong get fbuf add p 1
+p = add p 1
+while lt p e bound 65536
+if not isblank ulong get fbuf p
+break
+end
+p = add p 1
+end
+end
+end
+end
+if not iskey p e
+ret
+end
+p = add p len tkey
+if lt p e
+if not isblank ulong get fbuf p
+ret
+end
+end
+while lt p e bound 65536
+if not isblank ulong get fbuf p
+break
+end
+p = add p 1
+end
+v = p
+q = ulong 0
+if lt v e
+c = ulong get fbuf v
+if or eq c 34 eq c 39
+q = c
+v = add v 1
+end
+end
+ve = v
+while lt ve e bound 65536
+c = ulong get fbuf ve
+if gt q 0
+if eq c q
+break
+end
+end
+if eq q 0
+if or isblank c eq c 13
+break
+end
+end
+ve = add ve 1
+end
+put nuses 0 add get nuses 0 1
+if pinned v ve
+ret
+end
+put nbad 0 add get nbad 0 1
+r = write 1 tunp 0 len tunp
+r = write 1 name 0 get nlen 0
+r = write 1 tcol 0 len tcol
+wnum ln
+r = write 1 tcs 0 len tcs
+r = write 1 fbuf v sub ve v
+wnl
+end
+
+fn scan to void
+n = get flen 0
+s = ulong 0
+ln = ulong 1
+while lt s n bound 65536
+e = s
+while lt e n bound 65536
+if eq get fbuf e 10
+break
+end
+e = add e 1
+end
+line s e ln
+ln = add ln 1
+s = add e 1
+end
+end
+
+fn main to int
+if lt argcnt 2
+r = write 2 tuse 0 len tuse
+ret 64
+end
+k = ulong 1
+while lt k ulong argcnt bound 256
+if not load k
+r = write 2 terr 0 len terr
+r = write 2 name 0 get nlen 0
+put nb 0 10
+r = write 2 nb 0 1
+ret 65
+end
+scan
+k = add k 1
+end
+r = write 1 tsum 0 len tsum
+wnum get nuses 0
+r = write 1 tsu2 0 len tsu2
+wnum get nbad 0
+r = write 1 tsu3 0 len tsu3
+if gt get nbad 0 0
+r = write 1 tfail 0 len tfail
+ret 1
+end
+r = write 1 tpass 0 len tpass
+ret 0
+end

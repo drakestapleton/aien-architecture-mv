@@ -81,6 +81,24 @@ case "$step" in
       bash "$t"
     done
     obs script_tests_run 4
+    # Workflow action pins (#370), seeded .om: every `uses:` in .github/workflows/*.yml must name a
+    # 40-hex commit SHA (or a docker sha256 digest, or a ./ local action), never a tag such as @v7.
+    # The planted fixture must be refused with exactly its five unpinned rows first, so a checker
+    # that passes everything cannot pass this step.
+    "$omc" < tools/workflow-pins/actpins.om > "$build/actpins"
+    chmod +x "$build/actpins"
+    fixture_rc=0
+    "$build/actpins" tools/workflow-pins/fixtures/unpinned.yml > "$build/actpins-fixture.log" || fixture_rc=$?
+    cat "$build/actpins-fixture.log"
+    if [ "$fixture_rc" -ne 1 ] || ! grep -qx 'actpins: 9 uses, 5 unpinned' "$build/actpins-fixture.log"; then
+      echo "run.sh: actpins did not refuse its planted fixture as expected (exit $fixture_rc)" >&2
+      exit 1
+    fi
+    pins_rc=0
+    "$build/actpins" .github/workflows/*.yml > "$build/actpins.log" || pins_rc=$?
+    cat "$build/actpins.log"
+    obs workflow_uses_unpinned "$(sed -n 's/^actpins: [0-9]* uses, \([0-9]*\) unpinned$/\1/p' "$build/actpins.log")"
+    [ "$pins_rc" -eq 0 ]
     ;;
   zero-legacy)
     # #316: gate.sh independently checks the compiler pin before executing AIEN_OMC.

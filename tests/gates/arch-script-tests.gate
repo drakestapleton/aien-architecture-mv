@@ -1,6 +1,8 @@
 # tests/gates/arch-script-tests.gate
 # Mirrors hosted: offline tests of scripts/pr-gate.sh, rebase-crumb.sh and the seeded .om candidate checkers
-# tools/candidate/check_candidate.om, check_pins.om with their parity corpus (hosted: AIEN Pinned-omc Gates on ubuntu-24.04-arm; NOT_RUN without the pinned AIEN_OMC)
+# tools/candidate/check_candidate.om, check_pins.om with their parity corpus, and the seeded .om workflow
+# action-pin check tools/workflow-pins/actpins.om over .github/workflows/*.yml (#370)
+# (hosted: AIEN Pinned-omc Gates on ubuntu-24.04-arm; NOT_RUN without the pinned AIEN_OMC)
 gate: ARCH-SCRIPT-TESTS
 manifest_version: 2
 owner: aien-architecture
@@ -9,6 +11,8 @@ requires:
 inputs:
   - scripts/
   - tools/candidate/
+  - tools/workflow-pins/
+  - .github/workflows/
   - tools/zero-legacy/omega.pin
   - tests/gates/
 run:
@@ -16,7 +20,7 @@ run:
   args: ["script-tests"]
 expects:
   exit: 0
-  observe: ["script_tests_run == 4", "candidate_parity_different == 0"]
+  observe: ["script_tests_run == 4", "candidate_parity_different == 0", "workflow_uses_unpinned == 0"]
   verdict: PASS
 timeout: 10m
 exactness: EXACT

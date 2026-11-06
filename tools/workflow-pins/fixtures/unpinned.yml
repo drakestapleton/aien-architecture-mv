@@ -1,0 +1,14 @@
+# Planted fixture for tools/workflow-pins/actpins.om (#370): tests/gates/run.sh script-tests expects
+# exit 1 and the summary "actpins: 9 uses, 5 unpinned". Rows marked UNPINNED must be reported.
+steps:
+  # uses: actions/commented@v1
+  - uses: ./local/action
+  - uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"  # quoted, pinned
+  - uses: actions/checkout@3D3C42E5AAC5BA805825DA76410C181273BA90B1 # UNPINNED: uppercase hex
+  - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b # UNPINNED: 39 hex
+    uses: org/repo/path@main # UNPINNED: branch
+  - uses: docker://alpine@sha256:0000000000000000000000000000000000000000000000000000000000000000
+  - uses: docker://alpine:3 # UNPINNED: tag
+  - uses: actions/checkout@v7 # UNPINNED: floating tag
+  - usesx: not-a-uses-key@v1
+  - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

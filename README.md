@@ -106,7 +106,7 @@ The Spark runs five gates on every pull request. Each manifest in `tests/gates/`
 ```sh
 bash tests/gates/run.sh crumb-verify          # gate CRUMB-VERIFY: the crumbs are current
 bash tests/gates/run.sh crumb-tool-test       # gate ARCH-CRUMB-TOOL-TEST: the crumb tool tests
-bash tests/gates/run.sh script-tests          # gate ARCH-SCRIPT-TESTS: tests of the four checked scripts
+AIEN_OMC=<pinned omc> bash tests/gates/run.sh script-tests   # gate ARCH-SCRIPT-TESTS: the four checked scripts, the candidate checkers, and the workflow action-pin check (tools/workflow-pins/actpins.om; NOT_RUN without the pinned compiler)
 AIEN_OMC=<pinned omc> bash tests/gates/run.sh doctrine   # gate ARCH-DOCTRINE: doctrine consistency (tools/doctrine, seeded .om; NOT_RUN without the pinned compiler)
 bash tests/gates/run.sh qualification-status  # gate ARCH-QUALIFICATION-STATUS: R16 status wording
 ```
