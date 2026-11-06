@@ -970,7 +970,14 @@ static char *target_key(const Plane *p, const char *target, const char *rel) {
     die("target %s escapes the repository", target);
     return NULL;
 }
-static void fsync_dir(const char *dir) { int fd = open(dir, O_RDONLY); if (fd >= 0) { (void)fsync(fd); close(fd); } }
+/* directory fsync after a rename or link; best effort normally, fatal in enforcement mode (EINVAL: the filesystem
+ * cannot sync directories, which is not a failure to persist) */
+static void fsync_dir(const char *dir) {
+    int fd = open(dir, O_RDONLY);
+    if (fd < 0) { if (g_enforce) die("cannot open directory %s to sync it: %s", dir, strerror(errno)); return; }
+    if (fsync(fd) != 0 && g_enforce && errno != EINVAL) die("fsync of directory %s failed: %s", dir, strerror(errno));
+    close(fd);
+}
 static void durable_write(const char *store, const char *path, const char *data) {   /* tmp, fsync, rename, fsync dir */
     size_t len = strlen(data);
     if (len > MAX_RECORD_BYTES) die_x(EXIT_REFUSED, "REFUSED_RECORD: %s would be larger than %zu bytes; refusing to write it", path, MAX_RECORD_BYTES);

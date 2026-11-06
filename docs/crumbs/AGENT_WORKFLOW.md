@@ -18,6 +18,22 @@ crumb close   <agent> <dir> <target> modify "<what landed>"   # after pushing
 ```
 `<agent>` is a stable session id you choose once (e.g. `claude-l6b-7f32`), never a process id. Targets are repository-relative; it does not matter which worktree you run the command in.
 
+## Enforced repositories: one identity per session, check before every write (RFC-0002 sections 2.7, 2.8)
+In a repository with `git config crumb.enforce true` (or `CRUMB_ENFORCE=1`) the write gate of your runtime runs `crumb check <you> <repo-root> <path>` before each write and blocks on anything but exit 0. So:
+- Your `<agent>` is `<agent-name>.<session-id>` (matches `^[A-Za-z0-9][A-Za-z0-9._@-]{0,159}$`, used verbatim). Never share it with another session: a second live session presenting it is refused.
+- Claim before you write: `crumb claim <you> . <path-or-dir> "<intent>" <ttl>`. A directory lease covers everything below it; a claim that overlaps another agent's lease (same path, an ancestor or a descendant) exits 2. Note the `generation <N>` it prints.
+- `crumb check <you> . <path> [--generation N]` answers `HELD ... generation <N> expires <time>` (exit 0) or `REFUSED absent|expired|held-by <who>|generation <have>!=<want> ...` (exit 2). Exit 1, 3 or 4 mean the store itself is broken or misconfigured: stop and report it; do not work around it.
+- Renew (claim again) before `expires`; a renewal keeps the generation, a lapsed lease does not.
+
+Onboarding a repository (once per shared root, then once per clone), which is also the migration rule from a layout-1 store (old leases are not carried over; close them in the old store):
+```
+git config crumb.coordinationRoot /abs/shared/root      # the same absolute directory in every clone
+crumb store-init .                                       # first clone only: layout 2 (refused if the root holds old flat records)
+git config crumb.storeId "$(crumb store-id .)"           # every clone
+git config crumb.repoId <owner>/<repo>                   # only if origin is not host/<owner>/<repo>
+git config crumb.enforce true                            # every clone
+```
+
 ## Ending a long session (QUIESCE -> CHECKPOINT -> VERIFY -> WHISPER -> RELEASE)
 1. Quiesce: no new branches, decisions or workers; finish the cut in hand to a clean boundary or record exactly where it stopped.
 2. `crumb checkpoint <agent> --reason context-pressure` (today: `cc.sh new`), fill the record from the machine state (`git`, receipts, test output), not from memory. Tag every fact PROVEN (with a reference) / PARTIAL / BLOCKED (named dependency) / ASSUMED / OPEN. Keep the definition of done verbatim. Order next tasks by dependency with gates. Carry operator boundaries and who-owns-what.
