@@ -489,6 +489,19 @@ r "$NR" "$C" claim alice . x.c x 600
 mkdir -p "$DB/ceil"; r "$DB/ceil" env GIT_CEILING_DIRECTORIES="$DB" "$C" claim alice . x.c x 600
 [ $RC -eq 0 ] && [ -f "$DB/ceil/.crumb.local" ] && ok "N28 compatibility control: git's own discovery ends at GIT_CEILING_DIRECTORIES (\"not a git repository\"): fallback, despite a .git above" || { why; bad "N28 ceiling control"; }
 rm -f "$DB/ceil/.crumb.local"; rmdir "$DB/ceil"
+# re-review of B7: diagnostic text inside a file name or GIT_DIR must not count as "outside any repository"
+DN="$T/disc-name"; mkrepo "$DN" -; git -C "$DN" config crumb.repoId acme/discname; enroll "$DN" "$ROOT"
+r "$DN" "$C" claim alice . src/a.c first 600
+INC="$T/not a git repository (or any"; printf '[core]\n' > "$INC"; git -C "$DN" config include.path "$INC"
+r "$DN" "$C" check alice . src/a.c; r1=$RC
+printf '[broken\n' > "$INC"; s0=$(sum "$ROOT")
+r "$DN" "$C" claim bob . src/a.c takeover 600
+[ $r1 -eq 0 ] && [ $RC -eq 1 ] && herr GIT_DISCOVERY_FAILED && [ ! -e "$DN/.crumb.local" ] && [ "$(sum "$ROOT")" = "$s0" ] && ok "N28 a malformed included config whose file name contains git's non-repository words: exit 1 GIT_DISCOVERY_FAILED, no .crumb.local, store unchanged" || { why; bad "N28 diagnostic in a file name"; }
+printf '[core]\n' > "$INC"
+r "$DN" "$C" check alice . src/a.c --key src/a.c --generation 1
+[ $RC -eq 0 ] && ok "N28 control: include restored, alice still HELD at generation 1" || { why; bad "N28 include restored"; }
+r "$NR" env GIT_DIR="$T/not a git repository (or any of the parent directories)" "$C" claim bob . z.c z 600
+[ $RC -eq 1 ] && herr GIT_DISCOVERY_FAILED && [ ! -e "$NR/z.c" ] && ok "N28 an explicit GIT_DIR naming nothing (with the diagnostic words in its name): exit 1 GIT_DISCOVERY_FAILED" || { why; bad "N28 GIT_DIR words"; }
 r "$NR" env CRUMB_ENFORCE=1 "$C" claim bob . y.c y 600
 [ $RC -eq 1 ] && herr ENFORCE_NO_REPOSITORY && ok "N28 control: a genuine non-repository under enforcement is still ENFORCE_NO_REPOSITORY" || { why; bad "N28 non-repo enforced"; }
 

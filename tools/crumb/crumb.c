@@ -936,9 +936,19 @@ static int has_git_ancestor(const char *abs) {   /* a .git entry (directory, git
     }
     free(d); return 0;
 }
+/* git's own end-of-discovery diagnostic (LC_ALL=C), matched as the WHOLE stderr, never as a substring: git names
+ * files in other diagnostics ("bad config line 1 in file <path>"), so a path containing the words must not turn a
+ * configuration error into "outside any repository" (re-review of B7). The two forms git prints: */
+static int git_nonrepo_diagnostic(const char *err) {
+    if (!strcmp(err, "fatal: not a git repository (or any of the parent directories): .git")) return 1;
+    const char *head = "fatal: not a git repository (or any parent up to mount point ",
+               *tail = ")\nStopping at filesystem boundary (GIT_DISCOVERY_ACROSS_FILESYSTEM not set).";
+    size_t hl = strlen(head), tl = strlen(tail), n = strlen(err);
+    return n > hl + tl && !strncmp(err, head, hl) && !strcmp(err + n - tl, tail) && !memchr(err + hl, '\n', n - hl - tl);
+}
 /* Repository discovery (crumb924 B7). Returns the canonical work-tree top level, or NULL only when the directory is
- * positively established to be outside any repository: git's own discovery ran to its end ("not a git repository
- * (or any ...)", exit 128), or, with GIT_DIR unset, git did not succeed and no .git entry exists in the directory or
+ * positively established to be outside any repository: git's own discovery ran to its end (its whole stderr is
+ * exactly the end-of-discovery diagnostic, exit 128, GIT_DIR unset), or, with GIT_DIR unset, git did not succeed and no .git entry exists in the directory or
  * any ancestor. Every other failure (a malformed or unreadable .git/config, a .git file or GIT_DIR naming nothing,
  * dubious ownership, git not runnable inside a repository, a top level that does not contain the directory) is
  * GIT_DISCOVERY_FAILED (exit 1) in every mode, before anything is written: whether enforcement is configured cannot
@@ -956,7 +966,7 @@ static char *git_discover(const char *abs) {
     free(top);
     char *err = NULL; int rc2; git_rc(abs, "rev-parse --show-toplevel", &rc2, &err);
     const char *gd = getenv("GIT_DIR");
-    int nonrepo = (rc == 128 && rc2 == 128 && strstr(err, "not a git repository (or any"))
+    int nonrepo = (rc == 128 && rc2 == 128 && !(gd && *gd) && git_nonrepo_diagnostic(err))
                || (rc != 0 && !(gd && *gd) && !has_git_ancestor(abs));
     if (nonrepo) { free(err); return NULL; }
     char *nl = strchr(err, '\n'); if (nl && !strncmp(err, "warning:", 8) && nl[1]) memmove(err, nl + 1, strlen(nl + 1) + 1);
