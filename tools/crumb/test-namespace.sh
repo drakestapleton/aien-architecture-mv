@@ -446,5 +446,51 @@ git -C "$RI" config crumb.repoId /single; r "$RI" "$C" claim bob . src/b.c x 600
 r "$RI" env CRUMB_REPO_ID=single "$C" check alice . src/a.c
 [ $c1 -eq 3 ] && [ $RC -eq 0 ] && ok "N27 git config crumb.repoId /single refused (exit 3); control: CRUMB_REPO_ID=single still HELD" || { why; bad "N27 config repo id ($c1)"; }
 
+# ---- N28 (review B7) a repository-discovery failure is an error, never "outside git" (no .crumb.local fallback) ----
+# every coordination command in a repository whose .git/config git cannot read: exit 1 GIT_DISCOVERY_FAILED, nothing written
+disc_all() {   # disc_all <repo> <label> [env...]: n = commands refused with exit 1 GIT_DISCOVERY_FAILED and no .crumb.local
+  dr=$1; dl=$2; shift 2; n=0
+  for cmd in "claim bob . src/a.c takeover 600" "update bob . focus 600" "whisper bob . - finding" "close alice . src/a.c modify msg" "check alice . src/a.c" "sniff bob ." "list ."; do
+    # shellcheck disable=SC2086
+    r "$dr" env "$@" "$C" $cmd
+    [ $RC -eq 1 ] && herr '^crumb: GIT_DISCOVERY_FAILED' && [ ! -e "$dr/.crumb.local" ] && n=$((n + 1)) || { echo "    $dl: $cmd"; why; }
+  done
+}
+DB="$T/disc"; mkrepo "$DB" https://github.com/acme/disc.git; enroll "$DB" "$ROOT"
+r "$DB" "$C" claim alice . src/a.c live 600
+[ $RC -eq 0 ] && has 'generation 1$' && ok "N28 setup: alice holds src/a.c in a repository enforced only by git config" || { why; bad "N28 setup"; }
+cp "$DB/.git/config" "$T/disc-config"; s0=$(sum "$ROOT")
+printf '[broken\n' >> "$DB/.git/config"
+disc_all "$DB" malformed CRUMB_X=0
+[ $n -eq 7 ] && [ "$(sum "$ROOT")" = "$s0" ] && ok "N28 malformed .git/config: claim/update/whisper/close/check/sniff/list exit 1 GIT_DISCOVERY_FAILED, no .crumb.local, shared store byte-identical" || bad "N28 malformed config ($n of 7)"
+disc_all "$DB" malformed-env CRUMB_ENFORCE=1
+[ $n -eq 7 ] && [ "$(sum "$ROOT")" = "$s0" ] && ok "N28 malformed .git/config with CRUMB_ENFORCE=1: the same refusal (a discovery error, not ENFORCE_NO_REPOSITORY)" || bad "N28 malformed config, env enforce ($n of 7)"
+cp "$T/disc-config" "$DB/.git/config"
+r "$DB" "$C" check alice . src/a.c
+[ $RC -eq 0 ] && has '^HELD src/a.c by alice key src/a.c generation 1 ' && ! herr 'crumb.local' && ok "N28 control: config restored, alice's shared-store lease is intact (HELD generation 1, no stray .crumb.local)" || { why; bad "N28 restored"; }
+if [ "$(id -u)" = 0 ]; then
+  echo "NOT_RUN N28 unreadable .git/config (running as root: chmod 000 does not deny root)"
+else
+  chmod 000 "$DB/.git/config"; s0=$(sum "$ROOT")
+  disc_all "$DB" unreadable CRUMB_X=0; chmod 644 "$DB/.git/config"
+  [ $n -eq 7 ] && [ "$(sum "$ROOT")" = "$s0" ] && ok "N28 unreadable .git/config (chmod 000): all seven commands exit 1 GIT_DISCOVERY_FAILED, no .crumb.local, shared store byte-identical" || bad "N28 unreadable config ($n of 7)"
+fi
+PB="$T/disc-plain"; mkrepo "$PB" -; printf '[broken\n' >> "$PB/.git/config"
+r "$PB" "$C" claim alice . src/a.c x 600
+[ $RC -eq 1 ] && herr GIT_DISCOVERY_FAILED && [ ! -e "$PB/.crumb.local" ] && [ ! -e "$PB/.git/crumb" ] && ok "N28 malformed .git/config in a repository with no crumb configuration: exit 1, no .crumb.local, no store created (every mode)" || { why; bad "N28 plain malformed"; }
+GF="$T/disc-gitfile"; mkdir -p "$GF"; echo "gitdir: $T/nowhere" > "$GF/.git"
+r "$GF" "$C" claim alice . x.c x 600
+[ $RC -eq 1 ] && herr GIT_DISCOVERY_FAILED && [ ! -e "$GF/.crumb.local" ] && ok "N28 a .git file naming no repository: exit 1 GIT_DISCOVERY_FAILED, no .crumb.local" || { why; bad "N28 dangling gitdir"; }
+r "$DB/.git" "$C" claim alice . x.c x 600
+[ $RC -eq 1 ] && herr GIT_DISCOVERY_FAILED && [ ! -e "$DB/.git/.crumb.local" ] && ok "N28 inside .git (no work tree): exit 1 GIT_DISCOVERY_FAILED, no .crumb.local written into .git" || { why; bad "N28 inside .git"; }
+NR="$T/disc-norepo"; mkdir -p "$NR"
+r "$NR" "$C" claim alice . x.c x 600
+[ $RC -eq 0 ] && [ -f "$NR/.crumb.local" ] && ! herr GIT_DISCOVERY_FAILED && ok "N28 compatibility control: a genuine non-repository directory still takes the RFC-0001 .crumb.local fallback" || { why; bad "N28 non-repo control"; }
+mkdir -p "$DB/ceil"; r "$DB/ceil" env GIT_CEILING_DIRECTORIES="$DB" "$C" claim alice . x.c x 600
+[ $RC -eq 0 ] && [ -f "$DB/ceil/.crumb.local" ] && ok "N28 compatibility control: git's own discovery ends at GIT_CEILING_DIRECTORIES (\"not a git repository\"): fallback, despite a .git above" || { why; bad "N28 ceiling control"; }
+rm -f "$DB/ceil/.crumb.local"; rmdir "$DB/ceil"
+r "$NR" env CRUMB_ENFORCE=1 "$C" claim bob . y.c y 600
+[ $RC -eq 1 ] && herr ENFORCE_NO_REPOSITORY && ok "N28 control: a genuine non-repository under enforcement is still ENFORCE_NO_REPOSITORY" || { why; bad "N28 non-repo enforced"; }
+
 echo "namespace/check/enforce: $( [ $fail -eq 0 ] && echo ALL PASS || echo FAILURES )"
 exit $fail

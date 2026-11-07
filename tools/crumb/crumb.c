@@ -907,18 +907,70 @@ static int git_config_bool(const char *dir, const char *key) {
 }
 static char *ns_path(const char *root, const char *repo_id) { char *r = pjoin(root, "repos"), *s = pjoin(r, repo_id); free(r); return s; }
 
+static char *shq(const char *s);
+/* run a git command in dir under the C locale: stdout (trailing newlines stripped) and the exit status (-1 when git
+ * could not be run or did not exit); stderr is captured into *err when err is non-NULL, else discarded */
+static char *git_rc(const char *dir, const char *args, int *rc, char **err) {
+    char *q = shq(dir); size_t cn = strlen(q) + strlen(args) + 96; char *cmd = xmalloc(cn);
+    if (err) snprintf(cmd, cn, "LC_ALL=C LANGUAGE=C git -C %s %s 2>&1 >/dev/null", q, args);
+    else snprintf(cmd, cn, "LC_ALL=C LANGUAGE=C git -C %s %s 2>/dev/null", q, args);
+    FILE *f = popen(cmd, "r"); Buf b = {0}; bstr(&b, "");
+    *rc = -1;
+    if (f) {
+        char t[4096]; size_t n;
+        while ((n = fread(t, 1, sizeof t, f)) > 0) bput(&b, t, n);
+        int st = pclose(f); *rc = st != -1 && WIFEXITED(st) ? WEXITSTATUS(st) : -1;
+    }
+    free(cmd); free(q);
+    while (b.n && (b.p[b.n - 1] == '\n' || b.p[b.n - 1] == '\r')) b.p[--b.n] = 0;
+    if (err) { *err = b.p; return xstrdup(""); }
+    return b.p;
+}
+static int has_git_ancestor(const char *abs) {   /* a .git entry (directory, gitdir file or link) in abs or above */
+    char *d = xstrdup(abs);
+    for (;;) {
+        char *g = pjoin(*d ? d : "/", ".git"); struct stat st; int hit = lstat(g, &st) == 0; free(g);
+        if (hit) { free(d); return 1; }
+        char *s = strrchr(d, '/'); if (!s || !*d) break;
+        *s = 0;
+    }
+    free(d); return 0;
+}
+/* Repository discovery (crumb924 B7). Returns the canonical work-tree top level, or NULL only when the directory is
+ * positively established to be outside any repository: git's own discovery ran to its end ("not a git repository
+ * (or any ...)", exit 128), or, with GIT_DIR unset, git did not succeed and no .git entry exists in the directory or
+ * any ancestor. Every other failure (a malformed or unreadable .git/config, a .git file or GIT_DIR naming nothing,
+ * dubious ownership, git not runnable inside a repository, a top level that does not contain the directory) is
+ * GIT_DISCOVERY_FAILED (exit 1) in every mode, before anything is written: whether enforcement is configured cannot
+ * be known, so the .crumb.local fallback is never taken on a discovery error. */
+static char *git_discover(const char *abs) {
+    int rc; char *top = git_rc(abs, "rev-parse --show-toplevel", &rc, NULL), r[PATH_MAX];
+    if (rc == 0 && *top) {
+        if (!realpath(top, r)) die("GIT_DISCOVERY_FAILED: git reports top level %s for %s but it cannot be resolved: %s; refusing (no .crumb.local fallback on a discovery error)", top, abs, strerror(errno));
+        free(top); top = xstrdup(r);
+        size_t tl = strlen(top);
+        if (strncmp(abs, top, tl) || (abs[tl] && abs[tl] != '/'))
+            die("GIT_DISCOVERY_FAILED: %s is not inside its git top level %s; refusing (no .crumb.local fallback on a discovery error)", abs, top);
+        return top;
+    }
+    free(top);
+    char *err = NULL; int rc2; git_rc(abs, "rev-parse --show-toplevel", &rc2, &err);
+    const char *gd = getenv("GIT_DIR");
+    int nonrepo = (rc == 128 && rc2 == 128 && strstr(err, "not a git repository (or any"))
+               || (rc != 0 && !(gd && *gd) && !has_git_ancestor(abs));
+    if (nonrepo) { free(err); return NULL; }
+    char *nl = strchr(err, '\n'); if (nl && !strncmp(err, "warning:", 8) && nl[1]) memmove(err, nl + 1, strlen(nl + 1) + 1);
+    if ((nl = strchr(err, '\n'))) *nl = 0;
+    die("GIT_DISCOVERY_FAILED: git cannot establish whether %s is inside a repository (git rev-parse exit %d%s%s); refusing before any write (no .crumb.local fallback on a discovery error; fix the repository or its .git/config)", abs, rc, *err ? ": " : "", err);
+    return NULL;
+}
 static Plane *plane_find(const char *dir) {   /* resolve the coordination root; no identity check yet */
-    char *abs = absdir(dir), *top = run_git(abs, "rev-parse --show-toplevel"), r[PATH_MAX];
-    if (!*top || !realpath(top, r)) {
+    char *abs = absdir(dir), *top = git_discover(abs), r[PATH_MAX];
+    if (!top) {
         if (g_enforce) die("ENFORCE_NO_REPOSITORY: %s is not inside a git repository; enforcement mode has no .crumb.local fallback", abs);
         return NULL;
     }
-    top = xstrdup(r);
     size_t tl = strlen(top);
-    if (strncmp(abs, top, tl) || (abs[tl] && abs[tl] != '/')) {
-        if (g_enforce) die("ENFORCE_NO_REPOSITORY: %s is not inside its git top-level %s; enforcement mode has no .crumb.local fallback", abs, top);
-        return NULL;
-    }
     if (!g_enforce && git_config_bool(abs, "crumb.enforce") == 1) enforce_on();
     Plane *p = xmalloc(sizeof *p); memset(p, 0, sizeof *p);
     p->abs = abs; p->top = top; p->rel = abs[tl] ? xstrdup(abs + tl + 1) : xstrdup(".");
