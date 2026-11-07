@@ -288,5 +288,11 @@ r "$K" env CRUMB_TEST_NOW=$((NOW + 210)) "$C" check alice . src/a.c --generation
 r "$K" "$C" check alice . src/a.c --key src --key src
 [ $RC -eq 1 ] && ok "N18 a repeated --key is a usage error (exit 1)" || { why; bad "N18 repeated key"; }
 
+# ---- N19 a Hermes-style session identity (<agent-name>.<YYYYMMDD_HHMMSS_hex>, with `_`) is a valid verbatim id ----
+HI="worker.20261106_173039_c44e6c"
+r "$K" env CRUMB_TEST_NOW=$((NOW + 220)) CRUMB_SESSION="$HI" "$C" claim "$HI" . docs/h.md hermes 100
+r2=$RC; r "$K" env CRUMB_TEST_NOW=$((NOW + 221)) "$C" check "$HI" . docs/h.md
+[ $r2 -eq 0 ] && [ $RC -eq 0 ] && has "^HELD docs/h.md by $HI key docs/h.md generation 1 " && ok "N19 Hermes session identity with '_' claims and checks verbatim in enforcement mode" || { why; bad "N19 underscore identity"; }
+
 echo "namespace/check/enforce: $( [ $fail -eq 0 ] && echo ALL PASS || echo FAILURES )"
 exit $fail

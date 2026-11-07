@@ -788,7 +788,7 @@ static int id_char(char c, int agent) {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-' || (agent && c == '@');
 }
 static int alnum_c(char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9'); }
-/* ^[A-Za-z0-9][A-Za-z0-9._@-]{0,159}$ (layout 2 and enforcement mode: used verbatim as the record name, no aliases) */
+/* ^[A-Za-z0-9][A-Za-z0-9_.@-]{0,159}$ (layout 2 and enforcement mode: used verbatim as the record name, no aliases) */
 static int agent_ok(const char *a) {
     size_t n = strlen(a);
     if (n < 1 || n > 160 || !alnum_c(a[0])) return 0;
@@ -797,7 +797,7 @@ static int agent_ok(const char *a) {
 }
 static void agent_require(const Plane *p, const char *agent) {   /* p NULL: before resolution (enforcement only) */
     if (!(g_enforce || (p && p->layout == 2)) || agent_ok(agent)) return;
-    die("AGENT_ID_INVALID: agent id \"%s\" must match ^[A-Za-z0-9][A-Za-z0-9._@-]{0,159}$ (%s uses it verbatim; nothing is rewritten into an alias)", agent, g_enforce ? "enforcement mode" : "layout 2");
+    die("AGENT_ID_INVALID: agent id \"%s\" must match ^[A-Za-z0-9][A-Za-z0-9_.@-]{0,159}$ (%s uses it verbatim; nothing is rewritten into an alias)", agent, g_enforce ? "enforcement mode" : "layout 2");
 }
 /* ^[A-Za-z0-9][A-Za-z0-9._-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)?$; the second component may not be a record directory name
  * (dirs, agents, continuations, ledger), or namespace X/dirs would nest inside namespace X. */
