@@ -15,6 +15,7 @@ scanner and fixture judgments are made by native `.om` programs.
 | --- | --- |
 | `closure.om` | walk one checked-out tree, classify every regular file, apply a manifest, print rows and a summary, refuse in release mode |
 | `expect.om` | judge a report against an expected-row file (order free, row counts equal) |
+| `elfclose.om` | classify ELF files (`elf PATH...`) or every running process (`proc [PROCROOT]`): toolchain marks, linkage, `DT_NEEDED`, executable mappings (#316 item 2, DRA-178) |
 
 ## Build and run
 
@@ -89,9 +90,9 @@ this changed scanner or gate.
 
 ## Limits of v0 (honest scope)
 
-- Source tree only. It does not yet follow the build: linked libraries, process trees, and
-  the ELF closure of a product are the next slice (#316 item 2) and need the device/process
-  words already in the language (`execprog`, `waitpid`, `pipefds`, `readlnk`).
+- Source tree only. It does not follow the build; the ELF and running-process side is
+  `elfclose.om` (next section). Linked-object membership inside one ELF (which archive members
+  or crates were linked) is still not observed.
 - Head-only inspection (4096 bytes); a `#include`, shebang or `execprog` past that is missed, as is
   C or Python text that carries none of the three markers. The content rules are a floor, not a parser.
 - `expect.om` consumes each matched output line, so repeated rows must each occur (multiset match).
@@ -100,6 +101,64 @@ this changed scanner or gate.
   stack.
 - This repository's own `tools/crumb/crumb.c`, its Makefile and `scripts/*.sh` are reported as
   outstanding by this checker; they are migration rows of this repository, not exemptions.
+
+## ELF and process closure (`elfclose.om`, #316 item 2, DRA-178)
+
+```
+seed/out/omc < tools/zero-legacy/elfclose.om > elfclose && chmod +x elfclose
+./elfclose elf PATH...          # one row per file
+./elfclose proc [PROCROOT]      # every process under PROCROOT (default /proc)
+```
+
+An `ELF` row is `ELF path class machine type link interp needed producer verdict` (tabs):
+
+| Field | Values |
+| --- | --- |
+| class | `ELF64LE`; `UNSUPPORTED` (32-bit or big-endian); `MALFORMED` (a header, program-header, dynamic or section field points outside the file or breaks a rule); `NOT_ELF`; `UNREADABLE` |
+| link | `static` (no `PT_INTERP`, no `PT_DYNAMIC`), `dynamic` (`PT_INTERP`), `static-pie` (`PT_DYNAMIC` only) |
+| needed | the `DT_NEEDED` sonames in order, read through `DT_STRTAB` mapped by `PT_LOAD` |
+| producer | toolchain marks joined by `+`, or `none`: `gcc`, `clang`, `rustc`, `lld` (`.comment`), `go` (`.go.buildinfo`, `.note.go.buildid`), `gnu` (`PT_GNU_*` headers, `.gnu.*`/`.note.gnu.*` sections), `crt` (`.note.ABI-tag`), `note` (`PT_NOTE`) |
+| verdict | `FOREIGN` when any mark is present or the file links dynamically; `UNMARKED` when an `ELF64LE` file has neither; `UNKNOWN` for every other class |
+
+`UNMARKED` is what seeded omc output looks like (only `PT_LOAD` headers, no sections). It is a
+property of the bytes, not proof that the file came from Omega source; binding an `UNMARKED`
+binary to its `.om` source still needs a rebuild or a receipt. Stripped distribution binaries
+lose `.comment` but keep their GNU notes and headers, so they still come out `FOREIGN`.
+
+A `PROC` row is `PROC pid owner exe ...` followed by the same fields, classified by reading
+`PROCROOT/pid/exe`, the running image (also when the file on disk was replaced or deleted);
+`owner` is `self` for the scanning uid, else the uid. `MAP pid path` rows list the distinct files of
+the process's executable mappings from `PROCROOT/pid/maps`. A missing exe link (kernel threads,
+exited processes) is counted under `# NOEXE`; any other link error gives an `UNREADABLE` row, which
+is what another user's processes give an unprivileged scanner. Capacities: 64 program headers,
+1024 sections, a 64 KiB section-name table, the first 512 dynamic entries, sonames up to 255
+bytes, the first 4 KiB of `.comment`, 960 KiB of maps per process (`# MAPTRUNC`).
+
+Gate stage (in `gate.om`, observations `elfgen_exit`, `elf_scan_exit`, `proc_scan_exit`,
+`expect_elf_exit`, `expect_proc_exit`, `cross_expect_refused`): `fixtures/elfgen.om` writes 16
+synthetic ELF images (each one property: GNU/clang/rustc/Go marks, a dynamic file without marks,
+static and static-PIE, a `PT_GNU_STACK`-only image, a bare `PT_LOAD`-only image, six malformed,
+two unsupported (32-bit, big-endian) and one non-ELF file);
+`elfclose` must print exactly `fixtures/elf.expected` for them, for `build/closure` (real omc
+output, `UNMARKED`) and for a missing path; `fixtures/proc` is a fake process tree (exe links into
+the generated fixtures, a maps file with repeated, non-executable, anonymous, `[vdso]` and
+space-containing paths, a pid without an exe link and a non-numeric entry) that must give exactly
+`fixtures/proc.expected`; and judging the process report against the ELF expectations must be
+refused. `sh fixtures/elf-mutants.sh "$PWD" OMC DIR` applies eight one-line mutants to
+`elfclose.om` (no `DT_NEEDED`, dynamic not foreign, no class check, no map dedupe, wrong perms byte,
+virtual address used as file offset, no `PT_GNU_*`, no `.comment` scan); the gate must exit 1 for
+each. Observed 2026-11-07 on the Spark host with omc `734f0a39`: gate exit 0, mutants 8/8 killed,
+and on 438 ELF files from the host (`/usr/bin`, `/usr/lib`, cargo, three omc builds) the `needed`,
+`interp` and `type` fields equal binutils `readelf` for every file (independent oracle, not part of
+the gate).
+
+`portfolio.sh LIST OUT ZLBUILD` fetches each `NAME SHA` of LIST from aien-dev at exactly that
+commit (depth 1), runs `closure` over it and `elfclose` over every file closure calls `ELF`, and
+writes one summary row per repository; `procsnap.sh ZLBUILD` prints a publishable process snapshot
+(counts by owner/class/verdict, then the scanning account's executables outside the OS and agent
+tool directories, with the sha256 of each running image from `sha256.om`). Both drivers are shell
+and are themselves outstanding `SHELL` rows; the classification is native `.om`. Dated results are
+in `ledgers/portfolio-20261107/`.
 
 ## Candidate product-dependency ledgers (`ledgers/`)
 

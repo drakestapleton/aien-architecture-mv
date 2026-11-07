@@ -1,0 +1,26 @@
+ELF	build/elf/dyn-gcc	ELF64LE	aarch64	dyn	dynamic	/lib/ld-linux-aarch64.so.1	libc.so.6,libm.so.6	gcc	FOREIGN
+ELF	build/elf/dyn-nomark	ELF64LE	aarch64	dyn	dynamic	/lib/ld-linux-aarch64.so.1	libc.so.6,libm.so.6	none	FOREIGN
+ELF	build/elf/badneed	MALFORMED	-	-	-	-	-	-	UNKNOWN
+ELF	build/elf/need-nostr	MALFORMED	-	-	-	-	-	-	UNKNOWN
+ELF	build/elf/strtab-unmapped	MALFORMED	-	-	-	-	-	-	UNKNOWN
+ELF	build/elf/bad-shstrndx	MALFORMED	-	-	-	-	-	-	UNKNOWN
+ELF	build/elf/static-rust	ELF64LE	x86_64	exec	static	-	-	rustc	FOREIGN
+ELF	build/elf/clang-lld	ELF64LE	aarch64	exec	static	-	-	clang+lld	FOREIGN
+ELF	build/elf/static-pie-go	ELF64LE	aarch64	dyn	static-pie	-	-	go	FOREIGN
+ELF	build/elf/bare	ELF64LE	aarch64	exec	static	-	-	none	UNMARKED
+ELF	build/elf/gnu-phdr	ELF64LE	aarch64	exec	static	-	-	gnu	FOREIGN
+ELF	build/elf/trunc	MALFORMED	-	-	-	-	-	-	UNKNOWN
+ELF	build/elf/badph	MALFORMED	-	-	-	-	-	-	UNKNOWN
+ELF	build/elf/elf32	UNSUPPORTED	-	-	-	-	-	-	UNKNOWN
+ELF	build/elf/bigend	UNSUPPORTED	-	-	-	-	-	-	UNKNOWN
+ELF	build/elf/notelf	NOT_ELF	-	-	-	-	-	-	UNKNOWN
+ELF	build/closure	ELF64LE	aarch64	exec	static	-	-	none	UNMARKED
+ELF	build/elf/absent	UNREADABLE	-	-	-	-	-	-	UNKNOWN
+# ELF 18
+# FOREIGN 6
+# UNMARKED 2
+# UNKNOWN 10
+# PROC 0
+# MAP 0
+# NOEXE 0
+# MAPTRUNC 0

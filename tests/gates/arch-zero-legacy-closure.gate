@@ -1,5 +1,5 @@
 # tests/gates/arch-zero-legacy-closure.gate
-# #316: seeded .om closure checker refuses the hostile fixture tree and accepts the clean one (hosted: AIEN Pinned-omc Gates on ubuntu-24.04-arm)
+# #316: seeded .om closure checker refuses the hostile fixture tree and accepts the clean one; elfclose classifies the synthetic ELF and /proc fixtures (hosted: AIEN Pinned-omc Gates on ubuntu-24.04-arm)
 gate: ARCH-ZERO-LEGACY-CLOSURE
 manifest_version: 2
 owner: aien-architecture
@@ -13,7 +13,7 @@ run:
   args: ["zero-legacy"]
 expects:
   exit: 0
-  observe: ["tree_release_exit == 1", "clean_release_exit == 0", "clean_undeclared_exit == 1", "expect_tree_exit == 0", "expect_clean_exit == 0", "read_error_exit == 0", "directory_error_exit == 0"]
+  observe: ["tree_release_exit == 1", "clean_release_exit == 0", "clean_undeclared_exit == 1", "expect_tree_exit == 0", "expect_clean_exit == 0", "read_error_exit == 0", "directory_error_exit == 0", "elfgen_exit == 0", "elf_scan_exit == 0", "proc_scan_exit == 0", "expect_elf_exit == 0", "expect_proc_exit == 0", "cross_expect_refused == 1"]
   verdict: PASS
 timeout: 5m
 exactness: EXACT

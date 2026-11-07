@@ -1,0 +1,14 @@
+PROC	101	self	../../../build/elf/dyn-gcc	ELF64LE	aarch64	dyn	dynamic	/lib/ld-linux-aarch64.so.1	libc.so.6,libm.so.6	gcc	FOREIGN
+MAP	101	/usr/lib/x/prog
+MAP	101	/usr/lib/aarch64-linux-gnu/libc.so.6
+MAP	101	/opt/with space/lib.so (deleted)
+PROC	303	self	../../../build/closure	ELF64LE	aarch64	exec	static	-	-	none	UNMARKED
+MAP	303	/x/omc-built
+# ELF 0
+# FOREIGN 1
+# UNMARKED 1
+# UNKNOWN 0
+# PROC 2
+# MAP 4
+# NOEXE 1
+# MAPTRUNC 0

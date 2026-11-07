@@ -1,0 +1,1191 @@
+note SPDX-License-Identifier: Apache-2.0
+note elfclose: ELF and process closure inventory (aien-architecture-mv #316 item 2, DRA-178).
+note Seeded Omega program, built only by the pinned seed compiler in omega.pin.
+note usage: elfclose elf PATH...       one row per file
+note        elfclose proc [PROCROOT]   every process under PROCROOT (default /proc)
+note An ELF row is  ELF path class machine type link interp needed producer verdict  (tabs).
+note class   ELF64LE, or UNSUPPORTED (32-bit or big-endian), MALFORMED (a header, program
+note         header, dynamic or section field points outside the file or breaks a rule),
+note         NOT_ELF, UNREADABLE.
+note link    static (no PT_INTERP, no PT_DYNAMIC), dynamic (PT_INTERP), static-pie
+note         (PT_DYNAMIC without PT_INTERP).
+note needed  the DT_NEEDED names, comma separated, read through DT_STRTAB mapped by PT_LOAD.
+note producer the toolchain marks found, joined by +, or none: gcc, clang, rustc, lld (in
+note         .comment), go (.go.buildinfo or .note.go.buildid), gnu (PT_GNU_* program headers,
+note         .gnu.* or .note.gnu.* sections), crt (.note.ABI-tag), note (PT_NOTE).
+note verdict FOREIGN when a toolchain mark is present or the file links dynamically
+note         (dynamic or static-pie); UNMARKED when an ELF64LE file carries neither (seeded
+note         omc output: PT_LOAD only, no sections; that is not proof of its source);
+note         UNKNOWN for every other class.
+note A process row is  PROC pid owner exe-link-target class ... verdict, classified by reading
+note PROCROOT/pid/exe (the running image); owner is self when PROCROOT/pid belongs to the
+note scanning uid, else that uid. MAP pid path rows list the distinct file paths of its
+note executable mappings in PROCROOT/pid/maps. Processes whose exe link does not exist
+note (kernel threads, exited) are counted as NOEXE; other link errors give an UNREADABLE row.
+note Capacities: 64 program headers, 1024 sections, a 64 KiB section-name table, the first 512
+note dynamic entries and sonames up to 255 bytes; beyond them a file is MALFORMED (dynamic
+note entries past 512 are not read). Only the first 4 KiB of .comment is searched.
+note Summary lines: # ELF, # FOREIGN, # UNMARKED, # UNKNOWN, # PROC, # MAP, # NOEXE,
+note # MAPTRUNC (maps over 960 KiB), each with a count. Exit 0 done, 64 usage.
+
+text tuse "usage: elfclose elf PATH... | elfclose proc [PROCROOT]\n"
+text telf "elf"
+text tprc "proc"
+text tdpr "/proc"
+text texe "/exe"
+text tmps "/maps"
+text tnl "\n"
+text ttab "\t"
+text tdash "-"
+text tplus "+"
+text tcom ","
+text thash "# "
+text tsp " "
+text trELF "ELF\t"
+text trPRC "PROC\t"
+text trMAP "MAP\t"
+text tcls "ELF64LE\nUNSUPPORTED\nMALFORMED\nNOT_ELF\nUNREADABLE\n"
+text tlnk "static\ndynamic\nstatic-pie\n"
+text tprd "gcc\nclang\nrustc\ngo\nlld\ngnu\ncrt\nnote\n"
+text tvrd "FOREIGN\nUNMARKED\nUNKNOWN\n"
+text tcnt "ELF\nFOREIGN\nUNMARKED\nUNKNOWN\nPROC\nMAP\nNOEXE\nMAPTRUNC\n"
+text tsn ".comment\n.go.buildinfo\n.note.go.buildid\n.note.ABI-tag\n.gnu.\n.note.gnu.\n"
+text tnd "GCC:\nclang version\nrustc version\nLinker: LLD\n"
+text tmach "aarch64"
+text tx86 "x86_64"
+text tem "em"
+text tet "et"
+text ttyp "rel\nexec\ndyn\ncore\n"
+text tnone "none"
+text tself "self"
+
+global hb uchar 64
+global ph uchar 3584
+global dy uchar 8192
+global st uchar 4096
+global sh uchar 65536
+global ss uchar 65536
+global ssn ulong 1
+global cm uchar 4096
+global ib uchar 4096
+global ibn ulong 1
+global nd uchar 8192
+global ndn ulong 1
+global fsz ulong 1
+global fdg long 1
+global res ulong 8
+global pv ulong 8
+global path uchar 4096
+global pthn ulong 1
+global lnk uchar 4096
+global lnkn ulong 1
+global db uchar 65536
+global dfd long 1
+global root uchar 4096
+global rootn ulong 1
+global pid uchar 64
+global pidn ulong 1
+global mp uchar 983040
+global prv uchar 4096
+global prvn ulong 1
+global cnt ulong 8
+global nb uchar 24
+global arg uchar 16
+global stb uchar 128
+
+note ---- little-endian readers, one per buffer (a global is never an argument) ----
+
+fn h16 o ulong to ulong
+ret add ulong get hb o mul 256 ulong get hb add o 1
+end
+
+fn h64 o ulong to ulong
+v = ulong 0
+for i ulong 8
+v = or shl v 8 ulong get hb add o sub 7 i
+end
+ret v
+end
+
+fn p32 o ulong to ulong
+v = ulong 0
+for i ulong 4
+v = or shl v 8 ulong get ph add o sub 3 i
+end
+ret v
+end
+
+fn p64 o ulong to ulong
+v = ulong 0
+for i ulong 8
+v = or shl v 8 ulong get ph add o sub 7 i
+end
+ret v
+end
+
+fn d64 o ulong to ulong
+v = ulong 0
+for i ulong 8
+v = or shl v 8 ulong get dy add o sub 7 i
+end
+ret v
+end
+
+fn s32 o ulong to ulong
+v = ulong 0
+for i ulong 4
+v = or shl v 8 ulong get sh add o sub 3 i
+end
+ret v
+end
+
+fn s64 o ulong to ulong
+v = ulong 0
+for i ulong 8
+v = or shl v 8 ulong get sh add o sub 7 i
+end
+ret v
+end
+
+note ---- text tables: entry e of a newline-separated table ----
+
+fn tst e ulong k ulong to ulong
+s = ulong 0
+j = ulong 0
+while lt j e bound 4096
+if eq k 0
+if eq get tcls s 10
+j = add j 1
+end
+end
+if eq k 1
+if eq get tlnk s 10
+j = add j 1
+end
+end
+if eq k 2
+if eq get tprd s 10
+j = add j 1
+end
+end
+if eq k 3
+if eq get tvrd s 10
+j = add j 1
+end
+end
+if eq k 4
+if eq get tcnt s 10
+j = add j 1
+end
+end
+if eq k 5
+if eq get tsn s 10
+j = add j 1
+end
+end
+if eq k 6
+if eq get tnd s 10
+j = add j 1
+end
+end
+if eq k 7
+if eq get ttyp s 10
+j = add j 1
+end
+end
+s = add s 1
+end
+ret s
+end
+
+fn tch k ulong i ulong to uchar
+if eq k 0
+ret get tcls i
+end
+if eq k 1
+ret get tlnk i
+end
+if eq k 2
+ret get tprd i
+end
+if eq k 3
+ret get tvrd i
+end
+if eq k 4
+ret get tcnt i
+end
+if eq k 5
+ret get tsn i
+end
+if eq k 6
+ret get tnd i
+end
+ret get ttyp i
+end
+
+fn tln e ulong k ulong to ulong
+s = tst e k
+n = ulong 0
+while ne tch k add s n 10 bound 64
+n = add n 1
+end
+ret n
+end
+
+fn wtbl e ulong k ulong to void
+s = tst e k
+n = tln e k
+for i ulong n
+c = tch k add s i
+put nb 0 c
+r = write 1 nb 0 1
+end
+end
+
+note ---- output ----
+
+fn wnl to void
+r = write 1 tnl 0 1
+end
+
+fn wtab to void
+r = write 1 ttab 0 1
+end
+
+fn wdash to void
+r = write 1 tdash 0 1
+end
+
+fn wnum v ulong to void
+n = ulong 0
+if eq v 0
+put nb 23 48
+n = 1
+end
+x = v
+while gt x 0 bound 20
+put nb sub 23 n uchar add 48 rem x 10
+x = div x 10
+n = add n 1
+end
+r = write 1 nb sub 24 n n
+end
+
+note ---- file ranges ----
+
+fn inrange o ulong n ulong to bool
+f = get fsz 0
+if gt o f
+ret false
+end
+ret ge sub f o n
+end
+
+note ---- program headers ----
+
+fn interp o ulong to ulong
+off = p64 add o 8
+fz = p64 add o 32
+if eq fz 0
+ret 2
+end
+if gt fz 4095
+ret 2
+end
+if not inrange off fz
+ret 2
+end
+k = pread int get fdg 0 ib 0 fz long off
+if ne k long fz
+ret 2
+end
+n = ulong 0
+while lt n fz bound 4096
+if eq get ib n 0
+break
+end
+n = add n 1
+end
+if eq n 0
+ret 2
+end
+put ibn 0 n
+ret 0
+end
+
+note file offset of virtual address v through the PT_LOAD headers, or 2^64-1 when unmapped
+fn vtoo v ulong pn ulong to ulong
+for i ulong pn
+b = mul i 56
+if eq p32 b 1
+va = p64 add b 16
+fz = p64 add b 32
+if ge v va
+if lt sub v va fz
+ret add p64 add b 8 sub v va
+end
+end
+end
+end
+ret sub ulong 0 1
+end
+
+fn phscan pn ulong to ulong
+put pv 0 0
+put pv 1 0
+for i ulong pn
+b = mul i 56
+t = p32 b
+if eq t 3
+if eq get pv 0 1
+ret 2
+end
+put pv 0 1
+r = interp b
+if ne r 0
+ret r
+end
+end
+if eq t 2
+put pv 1 1
+put pv 2 p64 add b 8
+put pv 3 p64 add b 32
+end
+if eq t 4
+put res 4 or get res 4 128
+end
+if ge t 1685382480
+if ge 1685382483 t
+note PT_GNU_EH_FRAME, PT_GNU_STACK, PT_GNU_RELRO, PT_GNU_PROPERTY
+put res 4 or get res 4 32
+end
+end
+end
+ret 0
+end
+
+note append the NUL-terminated name at strtab offset o (strsz z, strtab at file offset pv 7)
+fn addneed o ulong z ulong to ulong
+if ge o z
+ret 2
+end
+w = sub z o
+if gt w 256
+w = 256
+end
+k = pread int get fdg 0 st 0 w long add get pv 7 o
+if ne k long w
+ret 2
+end
+n = ulong 0
+while lt n w bound 4096
+if eq get st n 0
+break
+end
+n = add n 1
+end
+if eq n w
+ret 2
+end
+if eq n 0
+ret 2
+end
+m = get ndn 0
+if gt add add m n 1 8192
+ret 2
+end
+if gt m 0
+put nd m 44
+m = add m 1
+end
+for i ulong n
+put nd add m i get st i
+end
+put ndn 0 add m n
+ret 0
+end
+
+fn dynamic pn ulong to ulong
+z = get pv 3
+if gt z 8192
+z = 8192
+end
+z = mul div z 16 16
+off = get pv 2
+if not inrange off z
+ret 2
+end
+k = pread int get fdg 0 dy 0 z long off
+if ne k long z
+ret 2
+end
+nent = div z 16
+put pv 4 0
+put pv 5 0
+put pv 6 0
+for i ulong nent
+t = d64 mul i 16
+if eq t 0
+break
+end
+if eq t 5
+put pv 4 d64 add mul i 16 8
+put pv 6 1
+end
+if eq t 10
+put pv 5 d64 add mul i 16 8
+end
+end
+ret needs nent pn
+end
+
+fn needs nent ulong pn ulong to ulong
+sz = get pv 5
+if eq get pv 6 0
+for i ulong nent
+t = d64 mul i 16
+if eq t 0
+break
+end
+if eq t 1
+ret 2
+end
+end
+ret 0
+end
+so = vtoo get pv 4 pn
+if not inrange so sz
+ret 2
+end
+put pv 7 so
+for i ulong nent
+t = d64 mul i 16
+if eq t 0
+break
+end
+if eq t 1
+r = addneed d64 add mul i 16 8 sz
+if ne r 0
+ret r
+end
+end
+end
+ret 0
+end
+
+fn phdrs to ulong
+put res 3 0
+po = h64 32
+pe = h16 54
+pn = h16 56
+if eq pn 0
+ret 0
+end
+if ne pe 56
+ret 2
+end
+if gt pn 64
+ret 2
+end
+sz = mul pn 56
+if not inrange po sz
+ret 2
+end
+k = pread int get fdg 0 ph 0 sz long po
+if ne k long sz
+ret 2
+end
+r = phscan pn
+if ne r 0
+ret r
+end
+if eq get pv 1 1
+r = dynamic pn
+if ne r 0
+ret r
+end
+end
+if eq get pv 0 1
+put res 3 1
+ret 0
+end
+if eq get pv 1 1
+put res 3 2
+end
+ret 0
+end
+
+note ---- sections ----
+
+note does the shstrtab name at ss[o] equal entry e of tsn (with its terminating NUL)
+fn ssis o ulong e ulong to bool
+s = tst e 5
+n = tln e 5
+if gt add add o n 1 get ssn 0
+ret false
+end
+for i ulong n
+if ne get ss add o i get tsn add s i
+ret false
+end
+end
+ret eq get ss add o n 0
+end
+
+note does the shstrtab name at ss[o] start with entry e of tsn
+fn sspre o ulong e ulong to bool
+s = tst e 5
+n = tln e 5
+if gt add o n get ssn 0
+ret false
+end
+for i ulong n
+if ne get ss add o i get tsn add s i
+ret false
+end
+end
+ret true
+end
+
+note does needle (tnd from s, m bytes) occur at cm[i]
+fn cmat i ulong s ulong m ulong to bool
+for j ulong m
+c = get cm add i j
+if ne c get tnd add s j
+ret false
+end
+end
+ret true
+end
+
+fn cmhas e ulong n ulong to bool
+s = tst e 6
+m = tln e 6
+if lt n m
+ret false
+end
+lim = sub n m
+i = ulong 0
+while le i lim bound 8192
+if cmat i s m
+ret true
+end
+i = add i 1
+end
+ret false
+end
+
+fn comment b ulong to ulong
+off = s64 add b 24
+z = s64 add b 32
+if gt z 4096
+z = 4096
+end
+if not inrange off z
+ret 2
+end
+k = pread int get fdg 0 cm 0 z long off
+if ne k long z
+ret 2
+end
+p = get res 4
+if cmhas 0 z
+p = or p 1
+end
+if cmhas 1 z
+p = or p 2
+end
+if cmhas 2 z
+p = or p 4
+end
+if cmhas 3 z
+p = or p 16
+end
+put res 4 p
+ret 0
+end
+
+fn shstr sn ulong sx ulong to ulong
+if ge sx sn
+ret 2
+end
+b = mul sx 64
+xo = s64 add b 24
+xz = s64 add b 32
+if gt xz 65536
+ret 2
+end
+if not inrange xo xz
+ret 2
+end
+k = pread int get fdg 0 ss 0 xz long xo
+if ne k long xz
+ret 2
+end
+put ssn 0 xz
+ret 0
+end
+
+fn secscan sn ulong to ulong
+for i ulong sn
+b = mul i 64
+nm = s32 b
+if ge nm get ssn 0
+ret 2
+end
+if ssis nm 0
+r = comment b
+if ne r 0
+ret r
+end
+end
+go = ssis nm 1
+if not go
+go = ssis nm 2
+end
+if go
+put res 4 or get res 4 8
+end
+if ssis nm 3
+put res 4 or get res 4 64
+end
+gn = sspre nm 4
+if not gn
+gn = sspre nm 5
+end
+if gn
+put res 4 or get res 4 32
+end
+end
+ret 0
+end
+
+fn sects to ulong
+so = h64 40
+se = h16 58
+sn = h16 60
+if eq so 0
+ret 0
+end
+if eq sn 0
+ret 0
+end
+if ne se 64
+ret 2
+end
+if gt sn 1024
+ret 2
+end
+sz = mul sn 64
+if not inrange so sz
+ret 2
+end
+k = pread int get fdg 0 sh 0 sz long so
+if ne k long sz
+ret 2
+end
+r = shstr sn h16 62
+if ne r 0
+ret r
+end
+ret secscan sn
+end
+
+note ---- one file ----
+
+fn parse to ulong
+k = pread int get fdg 0 hb 0 64 0
+if lt k 4
+ret 3
+end
+if ne get hb 0 127
+ret 3
+end
+if ne get hb 1 69
+ret 3
+end
+if ne get hb 2 76
+ret 3
+end
+if ne get hb 3 70
+ret 3
+end
+if lt k 64
+ret 2
+end
+if ne get hb 4 2
+ret 1
+end
+if ne get hb 5 1
+ret 1
+end
+put res 1 h16 18
+put res 2 h16 16
+r = phdrs
+if ne r 0
+ret r
+end
+ret sects
+end
+
+note classify the file named by path; results in res, ib, nd
+fn classify to void
+put res 0 4
+put res 3 0
+put res 4 0
+put ndn 0 0
+put ibn 0 0
+put ssn 0 0
+fd = fopen path 0 get pthn 0 0 0
+if lt fd 0
+ret
+end
+put fdg 0 fd
+e = fseek int fd 0 2
+if lt e 0
+r = fclose int fd
+ret
+end
+put fsz 0 ulong e
+c = parse
+put res 0 c
+r = fclose int fd
+end
+
+fn wmach m ulong to void
+if eq m 183
+r = write 1 tmach 0 len tmach
+ret
+end
+if eq m 62
+r = write 1 tx86 0 len tx86
+ret
+end
+r = write 1 tem 0 len tem
+wnum m
+end
+
+fn wtype t ulong to void
+if ge t 1
+if ge 4 t
+wtbl sub t 1 7
+ret
+end
+end
+r = write 1 tet 0 len tet
+wnum t
+end
+
+fn wprod to void
+p = get res 4
+if eq p 0
+r = write 1 tnone 0 len tnone
+ret
+end
+first = true
+for i ulong 8
+if ne and shr p i 1 0
+if not first
+r = write 1 tplus 0 1
+end
+first = false
+wtbl i 2
+end
+end
+end
+
+note write class onward for the classified file, count it
+fn wtail to void
+c = get res 0
+wtbl c 0
+wtab
+if ne c 0
+for i ulong 5
+wdash
+wtab
+end
+wdash
+wtab
+wtbl 2 3
+wnl
+put cnt 3 add get cnt 3 1
+ret
+end
+wmach get res 1
+wtab
+wtype get res 2
+wtab
+wtbl get res 3 1
+wtab
+if eq get ibn 0 0
+wdash
+else
+r = write 1 ib 0 get ibn 0
+end
+wtab
+if eq get ndn 0 0
+wdash
+else
+r = write 1 nd 0 get ndn 0
+end
+wtab
+wprod
+wtab
+fx = ne get res 4 0
+if ne get res 3 0
+fx = true
+end
+if not fx
+wtbl 1 3
+put cnt 2 add get cnt 2 1
+else
+wtbl 0 3
+put cnt 1 add get cnt 1 1
+end
+wnl
+end
+
+note ---- elf mode ----
+
+fn elfmode to void
+for a ulong sub ulong argcnt 2
+n = argread add a 2 path 0 4095
+if gt n 0
+put pthn 0 ulong n
+classify
+r = write 1 trELF 0 len trELF
+r = write 1 path 0 ulong n
+wtab
+wtail
+put cnt 0 add get cnt 0 1
+end
+end
+end
+
+note ---- proc mode ----
+
+note path = root / pid / suffix (0 exe, 1 maps)
+fn mkpath sfx ulong to void
+n = get rootn 0
+for i ulong n
+put path i get root i
+end
+put path n 47
+m = get pidn 0
+for i ulong m
+put path add add n 1 i get pid i
+end
+k = add add n 1 m
+if eq sfx 2
+put pthn 0 k
+ret
+end
+if eq sfx 0
+for i ulong len texe
+put path add k i get texe i
+end
+put pthn 0 add k len texe
+ret
+end
+for i ulong len tmps
+put path add k i get tmps i
+end
+put pthn 0 add k len tmps
+end
+
+fn wpid to void
+r = write 1 pid 0 get pidn 0
+end
+
+note one maps line mp[s, e): print MAP for an executable mapping of a file path
+fn mapline s ulong e ulong to void
+if not mapx s e
+ret
+end
+note skip five fields (range perms offset dev inode) to the path
+i = s
+f = ulong 0
+while lt i e bound 4096
+if eq get mp i 32
+f = add f 1
+while lt i e bound 4096
+if ne get mp i 32
+break
+end
+i = add i 1
+end
+if eq f 5
+break
+end
+else
+i = add i 1
+end
+end
+if ge i e
+ret
+end
+if ne get mp i 47
+ret
+end
+n = sub e i
+if gt n 4095
+ret
+end
+if eq n get prvn 0
+same = true
+for j ulong n
+if ne get prv j get mp add i j
+same = false
+break
+end
+end
+if same
+ret
+end
+end
+for j ulong n
+put prv j get mp add i j
+end
+put prvn 0 n
+r = write 1 trMAP 0 len trMAP
+wpid
+wtab
+r = write 1 mp i n
+wnl
+put cnt 5 add get cnt 5 1
+end
+
+note the perms field of the maps line at mp[s, e) has x as its third byte
+fn mapx s ulong e ulong to bool
+i = s
+while lt i e bound 4096
+if eq get mp i 32
+break
+end
+i = add i 1
+end
+if gt add i 4 e
+ret false
+end
+ret eq get mp add i 3 120
+end
+
+fn maps to void
+mkpath 1
+fd = fopen path 0 get pthn 0 0 0
+if lt fd 0
+ret
+end
+n = ulong 0
+c = true
+while c bound 983041
+r = read int fd mp n sub 983040 n
+if le r 0
+c = false
+else
+n = add n ulong r
+if eq n 983040
+c = false
+put cnt 7 add get cnt 7 1
+end
+end
+end
+r = fclose int fd
+put prvn 0 0
+s = ulong 0
+i = ulong 0
+while lt i n bound 983041
+if eq get mp i 10
+if ge 4000 sub i s
+mapline s i
+end
+s = add i 1
+end
+i = add i 1
+end
+end
+
+note the owner uid of PROCROOT/pid, or - when stat fails
+fn wuid to void
+mkpath 2
+r = stat path 0 get pthn 0 stb 0 128
+if lt r 0
+wdash
+ret
+end
+u = ulong 0
+for i ulong 4
+u = or shl u 8 ulong get stb add 24 sub 3 i
+end
+if eq u ulong getuid
+r = write 1 tself 0 len tself
+ret
+end
+wnum u
+end
+
+fn onepid to void
+mkpath 0
+k = readlnk path 0 get pthn 0 lnk 0 4096
+if eq k -2
+put cnt 6 add get cnt 6 1
+ret
+end
+r = write 1 trPRC 0 len trPRC
+wpid
+wtab
+wuid
+wtab
+mkpath 0
+put cnt 4 add get cnt 4 1
+if lt k 0
+wdash
+wtab
+put res 0 4
+wtail
+ret
+end
+r = write 1 lnk 0 ulong k
+wtab
+classify
+wtail
+maps
+end
+
+fn isnum o ulong m ulong to bool
+if eq m 0
+ret false
+end
+if gt m 63
+ret false
+end
+for i ulong m
+c = get db add o i
+if lt c 48
+ret false
+end
+if gt c 57
+ret false
+end
+end
+ret true
+end
+
+fn dent o ulong to void
+k = add o 19
+m = ulong 0
+while ne get db add k m 0 bound 256
+m = add m 1
+end
+if not isnum k m
+ret
+end
+for i ulong m
+put pid i get db add k i
+end
+put pidn 0 m
+onepid
+end
+
+fn procmode to void
+n = get rootn 0
+for i ulong n
+put path i get root i
+end
+fd = fopen path 0 n 16384 0
+if lt fd 0
+ret
+end
+while true bound 100000
+r = getdnts int fd db 0 len db
+if le r 0
+break
+end
+o = ulong 0
+while lt o ulong r bound 65536
+lo = ulong get db add o 16
+hi = ulong get db add o 17
+dent o
+o = add o add lo mul 256 hi
+end
+end
+r = fclose int fd
+end
+
+note ---- main ----
+
+fn summary to void
+for k ulong 8
+r = write 1 thash 0 2
+wtbl k 4
+r = write 1 tsp 0 1
+wnum get cnt k
+wnl
+end
+end
+
+fn mode to ulong
+n = argread 1 arg 0 15
+if eq n long len telf
+ok = true
+for i ulong len telf
+if ne get arg i get telf i
+ok = false
+end
+end
+if ok
+ret 1
+end
+end
+if eq n long len tprc
+ok = true
+for i ulong len tprc
+if ne get arg i get tprc i
+ok = false
+end
+end
+if ok
+ret 2
+end
+end
+ret 0
+end
+
+fn main to int
+if lt argcnt 2
+r = write 2 tuse 0 len tuse
+ret 64
+end
+m = mode
+if eq m 0
+r = write 2 tuse 0 len tuse
+ret 64
+end
+if eq m 1
+elfmode
+summary
+ret 0
+end
+n = long len tdpr
+if ge argcnt 3
+n = argread 2 root 0 4095
+if lt n 1
+r = write 2 tuse 0 len tuse
+ret 64
+end
+else
+for i ulong len tdpr
+put root i get tdpr i
+end
+end
+while gt n 1 bound 4095
+if ne get root sub ulong n 1 47
+break
+end
+n = sub n 1
+end
+put rootn 0 ulong n
+procmode
+summary
+ret 0
+end
