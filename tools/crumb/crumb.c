@@ -12,8 +12,14 @@
  *   crumb list [path]
  *   crumb validate [path]
  *   crumb store-id [dir]            print the coordination store id (STORE_ID marker, shared with synapse-coord)
+ *   crumb store-init [dir]          deliberately create a layout-2 (repository-namespaced) coordination root
+ *   crumb check <agent> <dir> <target> [--generation N] [--key K]   read-only: is target covered by agent's valid lease?
  *   crumb --strict <command> ...    refuse an unregistered coordination store (also CRUMB_STRICT_STORE_ID=1)
+ *   crumb --enforce <command> ...   fail-closed enforcement mode (also CRUMB_ENFORCE=1, git config crumb.enforce true)
  * Registered store identity: CRUMB_EXPECT_STORE_ID, else `git config crumb.storeId` (aien-architecture#234).
+ * Repository identity (layout 2): CRUMB_REPO_ID, else `git config crumb.repoId`, else the origin URL as <owner>/<repo>.
+ * Test-only clock: CRUMB_TEST_NOW=<epoch seconds> replaces the wall clock (tests of the expiry boundary; never set it
+ * in production).
  */
 #define _DEFAULT_SOURCE
 #define _POSIX_C_SOURCE 200809L
@@ -27,6 +33,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -34,6 +41,7 @@
 #define HISTORY_CAP 20
 #define SCENT_TTL 3600
 #define LOCK_TTL 1800
+#define MAX_TTL 315360000L   /* 3650 days: the largest ttl any command writes and the strict reader accepts (crumb924 B5) */
 #define WHISPER_RETENTION (24 * 3600)
 
 static void die(const char *fmt, ...) {
@@ -48,6 +56,15 @@ static void die(const char *fmt, ...) {
 static void *xmalloc(size_t n) { void *p = malloc(n ? n : 1); if (!p) die("out of memory"); return p; }
 static void *xrealloc(void *q, size_t n) { void *p = realloc(q, n ? n : 1); if (!p) die("out of memory"); return p; }
 static char *xstrdup(const char *s) { size_t n = strlen(s) + 1; char *p = xmalloc(n); memcpy(p, s, n); return p; }
+/* snprintf into a buffer of exactly size bytes, checked: an encoding error or a result that does not fit is an
+ * internal error (exit 1), never a silently truncated path. Every path the tool formats goes through a bounded write. */
+__attribute__((format(printf, 3, 4)))
+static void xsnprintf(char *dst, size_t size, const char *fmt, ...) {
+    va_list ap; va_start(ap, fmt);
+    int r = vsnprintf(dst, size, fmt, ap);
+    va_end(ap);
+    if (r < 0 || (size_t)r >= size) die("internal error: formatted string does not fit its %zu-byte buffer (format \"%s\")", size, fmt);
+}
 
 /* ---------- growable buffer ---------- */
 typedef struct { char *p; size_t n, cap; } Buf;
@@ -250,9 +267,39 @@ static J *jparse(const char *s) {
 }
 
 /* ---------- files ---------- */
+/* The one file opener: every open(2)/fopen(3) of this tool goes through crumb_open or crumb_open_follow.
+ *   - An empty path, or one with a ".." component, is refused before any open (exit 1, never treated as absent):
+ *     every path the tool opens is built from a canonical directory (realpath; a configured root, HOME or git path
+ *     with a ".." is canonicalised where it is resolved, canon_path), keys normalised by norm_path, readdir names
+ *     (never "." or "..") and constant names, so a ".." here is a resolution bug and is never followed.
+ *   - O_CLOEXEC always: no descriptor leaks into the git or cc.sh children.
+ *   - O_NOFOLLOW (crumb_open) unless the call site must read through a final symbolic link (crumb_open_follow: the
+ *     working tree's own files such as .crumb or .gitignore, which git can track as links; git's info/exclude; the
+ *     operator's lane reports; /dev/urandom; a directory opened only to fsync it, whose path may name a linked root).
+ *   - openat(AT_FDCWD, ...).
+ * crumb is a local CLI without a privilege boundary: the paths come from the operator's own configuration
+ * (CRUMB_COORD_ROOT, git config, argv). This opener does not change that trust model; it makes the rules uniform. */
+static int has_dotdot(const char *p) {   /* 1 when some '/'-separated component of p is exactly ".." */
+    for (const char *s = p;;) {
+        const char *e = strchr(s, '/'); size_t n = e ? (size_t)(e - s) : strlen(s);
+        if (n == 2 && s[0] == '.' && s[1] == '.') return 1;
+        if (!e) return 0;
+        s = e + 1;
+    }
+}
+static int open_checked(const char *path, int flags, mode_t mode, int follow) {
+    if (!*path) die("PATH_REFUSED: empty path; refusing to open it");
+    if (has_dotdot(path)) die("PATH_REFUSED: %s has a '..' component; refusing to open it (crumb opens canonical paths only)", path);
+    return openat(AT_FDCWD, path, flags | O_CLOEXEC | (follow ? 0 : O_NOFOLLOW), mode);
+}
+static int crumb_open(const char *path, int flags, mode_t mode) { return open_checked(path, flags, mode, 0); }
+static int crumb_open_follow(const char *path, int flags, mode_t mode) { return open_checked(path, flags, mode, 1); }
+/* a working-tree file (follows a final symlink); NULL when it cannot be opened */
 static char *slurp(const char *path) {
-    FILE *f = fopen(path, "rb");
-    if (!f) return NULL;
+    int fd = crumb_open_follow(path, O_RDONLY, 0);
+    if (fd < 0) return NULL;
+    FILE *f = fdopen(fd, "rb");
+    if (!f) { close(fd); return NULL; }
     Buf b = {0}; bstr(&b, "");
     char t[4096]; size_t n;
     while ((n = fread(t, 1, sizeof t, f)) > 0) bput(&b, t, n);
@@ -260,9 +307,11 @@ static char *slurp(const char *path) {
     return b.p;
 }
 /* Every file this tool creates is mode 0644 (minus umask), never 0666: fopen() would create it world-writable
- * under a permissive umask (CodeQL cpp/world-writable-file-creation). append=1 opens for appending. */
+ * under a permissive umask (CodeQL cpp/world-writable-file-creation). append=1 opens git's info/exclude for appending
+ * (following a final link, as slurp read it); otherwise path is a fresh temp name and a planted link is refused. */
 static FILE *fcreate(const char *path, int append) {
-    int fd = open(path, O_WRONLY | O_CREAT | (append ? O_APPEND : O_TRUNC), 0644);
+    int flags = O_WRONLY | O_CREAT | (append ? O_APPEND : O_TRUNC);
+    int fd = append ? crumb_open_follow(path, flags, 0644) : crumb_open(path, flags, 0644);
     if (fd < 0) return NULL;
     FILE *f = fdopen(fd, append ? "a" : "wb");
     if (!f) close(fd);
@@ -270,7 +319,7 @@ static FILE *fcreate(const char *path, int append) {
 }
 static void spit(const char *path, const char *data) {
     size_t tn = strlen(path) + 32; char *tmp = xmalloc(tn);
-    snprintf(tmp, tn, "%s.tmp%ld", path, (long)getpid());
+    xsnprintf(tmp, tn, "%s.tmp%ld", path, (long)getpid());
     FILE *f = fcreate(tmp, 0);
     if (!f) die("cannot write %s: %s", tmp, strerror(errno));
     if (fputs(data, f) < 0 || fclose(f) != 0) die("write failed: %s", tmp);
@@ -278,7 +327,33 @@ static void spit(const char *path, const char *data) {
 }
 static char *pjoin(const char *a, const char *b) {
     size_t n = strlen(a) + strlen(b) + 2; char *p = xmalloc(n);
-    snprintf(p, n, "%s/%s", a, b); return p;
+    xsnprintf(p, n, "%s/%s", a, b); return p;
+}
+/* Canonical form of an absolute path: realpath when it exists, else each leading part that exists is resolved with
+ * realpath and the rest is applied lexically (".." of a component that does not exist yet drops it; ".." at / stays
+ * at /, as the kernel does). The result has no "." or ".." component, so no path built on it carries one. */
+static char *canon_path(const char *abs) {
+    char r[PATH_MAX];
+    if (realpath(abs, r)) return xstrdup(r);
+    Buf b = {0}; bstr(&b, "");
+    char *cp = xstrdup(abs);
+    for (char *tok = strtok(cp, "/"); tok; tok = strtok(NULL, "/")) {
+        if (!strcmp(tok, ".")) continue;
+        if (!strcmp(tok, "..")) { char *s = strrchr(b.p, '/'); if (s) { *s = 0; b.n = (size_t)(s - b.p); } continue; }
+        bstr(&b, "/"); bstr(&b, tok);
+        if (realpath(b.p, r)) { b.n = 0; bstr(&b, strcmp(r, "/") ? r : ""); }
+    }
+    free(cp);
+    if (!b.n) bstr(&b, "/");
+    return b.p;
+}
+/* a path the operator configured (environment, HOME), relative ones anchored at the working directory: as given
+ * unless it has a ".." component, which is resolved by canon_path */
+static char *canon_dotdot(const char *v) {
+    if (!has_dotdot(v)) return xstrdup(v);
+    if (v[0] == '/') return canon_path(v);
+    char cwd[PATH_MAX]; if (!getcwd(cwd, sizeof cwd)) die("cannot resolve the working directory for %s: %s", v, strerror(errno));
+    char *j = pjoin(cwd, v), *c = canon_path(j); free(j); return c;
 }
 static char *absdir(const char *d) {
     char r[PATH_MAX];
@@ -289,7 +364,17 @@ static char *absdir(const char *d) {
 static const char *base_of(const char *p) { const char *s = strrchr(p, '/'); return s && s[1] ? s + 1 : p; }
 
 /* ---------- time ---------- */
-static void now_iso(char *out) { time_t t = time(NULL); struct tm tm; gmtime_r(&t, &tm); strftime(out, 21, "%Y-%m-%dT%H:%M:%SZ", &tm); }
+/* CRUMB_TEST_NOW (test-only, documented in RFC-0002 section 2.8): a fixed epoch second instead of the wall clock, so
+ * the lease expiry boundary can be tested exactly. Anything but decimal digits is refused. */
+static long now_epoch(void) {
+    const char *e = getenv("CRUMB_TEST_NOW");
+    if (!e || !*e) return (long)time(NULL);
+    for (const char *s = e; *s; s++) if (*s < '0' || *s > '9') die("CRUMB_TEST_NOW is \"%s\"; expected epoch seconds (test-only clock)", e);
+    if (strlen(e) > 12) die("CRUMB_TEST_NOW is out of range: %s", e);
+    return atol(e);
+}
+static void iso_of(long when, char *out) { time_t t = (time_t)when; struct tm tm; gmtime_r(&t, &tm); strftime(out, 21, "%Y-%m-%dT%H:%M:%SZ", &tm); }
+static void now_iso(char *out) { iso_of(now_epoch(), out); }
 static long parse_iso(const char *s) {  /* tolerant: first 19 chars, treated as UTC; -1 on failure */
     struct tm tm; memset(&tm, 0, sizeof tm);
     int y, mo, d, h, mi, se;
@@ -298,12 +383,37 @@ static long parse_iso(const char *s) {  /* tolerant: first 19 chars, treated as 
     return (long)timegm(&tm);
 }
 static long jlong(const J *o, const char *key, long dflt) { J *v = jget(o, key); return v && v->t == JNUM ? atol(v->s) : dflt; }
+/* strict forms (enforcement mode, crumb check): exactly YYYY-MM-DDTHH:MM:SSZ with fields in range; a decimal u64 */
+static int iso_strict(const char *s, long *out) {
+    if (!s || strlen(s) != 20) return 0;
+    for (int i = 0; i < 20; i++) {
+        char c = s[i], want = i == 4 || i == 7 ? '-' : i == 10 ? 'T' : i == 13 || i == 16 ? ':' : i == 19 ? 'Z' : 0;
+        if (want ? c != want : !(c >= '0' && c <= '9')) return 0;
+    }
+    int y, mo, d, h, mi, se;
+    if (sscanf(s, "%4d-%2d-%2dT%2d:%2d:%2d", &y, &mo, &d, &h, &mi, &se) != 6) return 0;
+    static const int mdays[] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
+    if (y < 1970 || mo < 1 || mo > 12 || h > 23 || mi > 59 || se > 59 || d < 1) return 0;
+    int leap = (y % 4 == 0 && y % 100) || y % 400 == 0;
+    if (d > mdays[mo - 1] + (mo == 2 && leap)) return 0;
+    long v = parse_iso(s); if (v < 0) return 0;
+    *out = v; return 1;
+}
+static int u64_str(const char *s, unsigned long long *out) {
+    if (!s || !*s || strlen(s) > 20) return 0;
+    for (const char *p = s; *p; p++) if (*p < '0' || *p > '9') return 0;
+    if (s[0] == '0' && s[1]) return 0;   /* no leading zeros: one spelling per value */
+    errno = 0; char *e; unsigned long long v = strtoull(s, &e, 10);
+    if (errno || *e) return 0;
+    *out = v; return 1;
+}
+static J *jnum_u64(unsigned long long x) { char t[32]; snprintf(t, sizeof t, "%llu", x); J *j = jnew(JNUM); j->s = xstrdup(t); return j; }
 
 /* ---------- .crumb.local (ephemeral bus) ---------- */
 typedef struct { char *path, *dir, *before; J *root; } Local;
 
 static void sweep(J *root) {  /* SPEC 5.4 */
-    long now = (long)time(NULL);
+    long now = now_epoch();
     J *sc = jget(root, "active_scents");
     if (sc && sc->t == JOBJ) for (size_t i = sc->n; i-- > 0;) {
         long u = parse_iso(jstrval(sc->v[i], "updated_at"));
@@ -325,9 +435,15 @@ static void sweep(J *root) {  /* SPEC 5.4 */
         wh->n = m;
     }
 }
+static char *read_bounded(const char *path, size_t cap, size_t *len);
+/* .crumb.local is this tool's own state file (RFC-0001 fallback), never a link it wrote: read with the store-record
+ * reader (crumb_open, O_NOFOLLOW), so a symbolic link, FIFO or other special file there is refused (REFUSED_RECORD,
+ * exit 4) instead of being read through. The cap only bounds a runaway file; crumb's own files stay far below it. */
+#define MAX_LOCAL_BYTES ((size_t)64 << 20)
+static char *read_local(const char *path) { return read_bounded(path, MAX_LOCAL_BYTES, NULL); }
 static Local local_open(const char *dir) {
     Local l; l.dir = absdir(dir); l.path = pjoin(l.dir, ".crumb.local");
-    char *txt = slurp(l.path);
+    char *txt = read_local(l.path);
     l.root = txt ? jparse(txt) : NULL;
     if (txt && (!l.root || l.root->t != JOBJ)) die("%s is not valid JSON; fix or move it aside", l.path);
     if (!l.root) l.root = jnew(JOBJ);
@@ -346,6 +462,7 @@ static void git_exclude_local(const char *dir) {   /* keep .crumb.local out of `
     char *gp = run_git(dir, "rev-parse --git-path info/exclude");
     if (!*gp) return;
     char *full = gp[0] == '/' ? xstrdup(gp) : pjoin(dir, gp);
+    if (has_dotdot(full)) { char *c = canon_path(full); free(full); full = c; }   /* git may print a path with ".." */
     char *txt = slurp(full);
     if (txt) { char *c = xstrdup(txt); for (char *l = strtok(c, "\n"); l; l = strtok(NULL, "\n")) if (!strcmp(l, ".crumb.local")) return; }
     FILE *f = fcreate(full, 1); if (!f) return;
@@ -386,6 +503,25 @@ static int has_lock_by(J *root, const char *agent) {
     for (size_t i = 0; i < lk->n; i++) { const char *h = jstrval(lk->v[i], "holder"); if (h && !strcmp(h, agent)) return 1; }
     return 0;
 }
+/* ---------- lease generation (fencing token) ----------
+ * Per key, the generation strictly increases on every new acquisition (first claim, re-acquire after expiry, takeover
+ * after release); a renewal by the current valid holder keeps it. The highest generation ever issued for a key is kept
+ * in the record's "generations" map, which outlives the lease itself (close and expiry remove only the lease). */
+static unsigned long long jgen(const J *o, const char *key) { J *v = jget(o, key); unsigned long long g; return v && v->t == JNUM && u64_str(v->s, &g) ? g : 0; }
+static unsigned long long gen_next(J *rec, const char *path, const char *key, const J *cur, const char *agent) {
+    J *gens = jget(rec, "generations");
+    if (gens && gens->t != JOBJ) die("MALFORMED_RECORD: %s: \"generations\" is not an object; refusing (a reset counter would reuse fencing tokens)", path);
+    gens = jobj_of(rec, "generations");
+    unsigned long long last = jgen(gens, key), cg = cur ? jgen(cur, "generation") : 0;
+    if (cg > last) last = cg;
+    const char *h = cur ? jstrval(cur, "holder") : NULL;
+    unsigned long long g = cur && cg && h && !strcmp(h, agent) ? cg : last + 1;
+    if (!g) die("generation counter for %s is exhausted", key);
+    /* the high-water mark never decreases: a renewal keeps the lease's generation but never lowers a larger
+     * counter (crumb924 B6; enforcement mode refuses such a pair before this point, dir_record_strict) */
+    jset(gens, key, jnum_u64(g > last ? g : last));
+    return g;
+}
 
 /* ---------- operations ---------- */
 static int legacy_claim(const char *agent, const char *dir, const char *target, const char *intent, long ttl) {
@@ -400,12 +536,14 @@ static int legacy_claim(const char *agent, const char *dir, const char *target, 
         }
     }
     char ts[21]; now_iso(ts);
+    unsigned long long gen = gen_next(l.root, l.path, target, cur, agent);
     J *e = cur && cur->t == JOBJ ? cur : jnew(JOBJ);
     jset(e, "holder", jstr(agent)); jset(e, "intent", jstr(intent)); jset(e, "acquired_at", jstr(ts)); jset(e, "ttl_seconds", jnum(ttl));
+    jset(e, "generation", jnum_u64(gen));
     jset(jobj_of(l.root, "locks"), target, e);
     scent_set(l.root, agent, intent, SCENT_TTL > ttl ? SCENT_TTL : ttl);
     local_save(&l);
-    printf("CLAIMED %s in %s as %s (ttl %lds)\n", target, l.dir, agent, ttl);
+    printf("CLAIMED %s in %s as %s (ttl %lds) generation %llu\n", target, l.dir, agent, ttl, gen);
     return 0;
 }
 static int legacy_update(const char *agent, const char *dir, const char *focus, long ttl) {
@@ -477,7 +615,9 @@ static int legacy_sniff(const char *agent, const char *dir) {   /* SPEC 5.1 */
 static void mkdir_p(const char *path);
 
 typedef struct { char expect[33]; const char *source; int has_expect, warned; } Ident;   /* registered store identity, see below */
-typedef struct { char *store, *top, *abs, *rel, *branch, *head, *base; Ident id; } Plane;
+typedef struct { char *store, *top, *abs, *rel, *branch, *head, *base; Ident id; char *root, *repo_id; const char *repo_src; int layout; } Plane;
+/* root: the coordination root (STORE_ID, LAYOUT, .lock). store: where records live, the root itself in layout 1,
+ * <root>/repos/<repo-id> in layout 2 (NULL when layout 2 and no repository id resolved). */
 typedef struct { char *path; J *root; char *before; int agent, dead, existed; } Rec;
 typedef struct { Plane *p; Rec **r; size_t n, cap; int fd; } Txn;
 
@@ -552,7 +692,7 @@ static char *read_bounded(const char *path, size_t cap, size_t *len) {
         die("cannot stat %s: %s", path, strerror(errno));
     }
     if (!S_ISREG(st.st_mode)) refuse(path, kind_of(st.st_mode));
-    int fd = open(path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
+    int fd = crumb_open(path, O_RDONLY | O_NONBLOCK, 0);
     if (fd < 0) {
         if (errno == ENOENT) return NULL;
         if (errno == ELOOP) refuse(path, "is a symbolic link");
@@ -597,7 +737,7 @@ static void check_real_parents(const char *store, const char *path) {
  * neither block on a planted FIFO nor follow a planted link. */
 static int create_temp(const char *tmp) {
     if (unlink(tmp) != 0 && errno != ENOENT) die("cannot remove stale %s: %s", tmp, strerror(errno));
-    int fd = open(tmp, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0644);
+    int fd = crumb_open(tmp, O_WRONLY | O_CREAT | O_EXCL, 0644);
     if (fd < 0) die("cannot write %s: %s", tmp, strerror(errno));
     return fd;
 }
@@ -618,6 +758,7 @@ static void write_all(int fd, const char *data, size_t len, const char *path) {
 #define STORE_ID_FILE "STORE_ID"
 #define STORE_ID_FORMAT "crumb-coord-store-id/1"
 static int g_strict;   /* --strict or CRUMB_STRICT_STORE_ID=1 */
+static int g_enforce;  /* --enforce, CRUMB_ENFORCE=1 or git config crumb.enforce true: fail closed everywhere (implies strict) */
 static int hex_id_ok(const char *s, size_t n) {
     if (n != 32) return 0;
     for (size_t i = 0; i < n; i++) if (!((s[i] >= '0' && s[i] <= '9') || (s[i] >= 'a' && s[i] <= 'f'))) return 0;
@@ -641,30 +782,36 @@ static int read_marker(const char *store, char hex[33]) {
     return 1;
 }
 static void fsync_dir(const char *dir);
+/* Publish a new store marker file at path: tmp, fsync, link(2) (never replaces an existing file), dir fsync. */
+static void publish_once(const char *dir, const char *path, const char *data, size_t len) {
+    size_t tn = strlen(path) + 32; char *tmp = xmalloc(tn);
+    xsnprintf(tmp, tn, "%s.tmp%ld", path, (long)getpid());
+    int fd = create_temp(tmp);
+    write_all(fd, data, len, tmp);
+    if (fsync(fd) != 0) die("fsync failed: %s", tmp);
+    if (close(fd) != 0) die("close failed: %s", tmp);
+    int lr = link(tmp, path), le = errno;
+    unlink(tmp);
+    if (lr != 0 && le != EEXIST) die("cannot publish %s: %s", path, strerror(le));
+    fsync_dir(dir);
+    free(tmp);
+}
 /* Create the marker if absent; call only while holding the store's fcntl lock. link(2) never replaces an existing
  * file, so even a writer outside the lock cannot overwrite a marker. A crash before the link leaves only a tmp file. */
 static void ensure_marker_locked(const char *store, char hex[33]) {
     if (read_marker(store, hex)) return;
     unsigned char rb[16]; size_t got = 0;
-    int rf = open("/dev/urandom", O_RDONLY | O_CLOEXEC);
+    int rf = crumb_open_follow("/dev/urandom", O_RDONLY, 0);
     if (rf < 0) die("cannot open /dev/urandom: %s", strerror(errno));
     while (got < sizeof rb) { ssize_t r = read(rf, rb + got, sizeof rb - got); if (r < 0 && errno == EINTR) continue; if (r <= 0) die("cannot read /dev/urandom"); got += (size_t)r; }
     close(rf);
     char line[64]; int ll = snprintf(line, sizeof line, "%s ", STORE_ID_FORMAT);
     for (size_t i = 0; i < sizeof rb; i++) ll += snprintf(line + ll, sizeof line - (size_t)ll, "%02x", rb[i]);
     line[ll++] = '\n'; line[ll] = 0;
-    char *mp = pjoin(store, STORE_ID_FILE), *tmp = xmalloc(strlen(mp) + 32);
-    sprintf(tmp, "%s.tmp%ld", mp, (long)getpid());
-    int fd = create_temp(tmp);
-    write_all(fd, line, (size_t)ll, tmp);
-    if (fsync(fd) != 0) die("fsync failed: %s", tmp);
-    if (close(fd) != 0) die("close failed: %s", tmp);
-    int lr = link(tmp, mp), le = errno;
-    unlink(tmp);
-    if (lr != 0 && le != EEXIST) die("cannot publish %s: %s", mp, strerror(le));
-    fsync_dir(store);
+    char *mp = pjoin(store, STORE_ID_FILE);
+    publish_once(store, mp, line, (size_t)ll);
     if (!read_marker(store, hex)) die_x(EXIT_STORE_ID, "STORE_ID_MISSING: coordination store %s has no %s marker after creating it", store, STORE_ID_FILE);
-    free(tmp); free(mp);
+    free(mp);
 }
 /* Ident (expected store id, its source, warned-once flag) is declared with Plane above. */
 static Ident ident_resolve(const char *gitdir) {   /* gitdir NULL: no repository, environment only */
@@ -703,38 +850,265 @@ static char *session_id(const char *agent) {
     if (e && *e) return xstrdup(e);
     char h[256]; if (gethostname(h, sizeof h) != 0) strcpy(h, "unknown-host");
     h[sizeof h - 1] = 0;
-    size_t n = strlen(agent) + strlen(h) + 2; char *s = xmalloc(n); snprintf(s, n, "%s@%s", agent, h); return s;
+    size_t n = strlen(agent) + strlen(h) + 2; char *s = xmalloc(n); xsnprintf(s, n, "%s@%s", agent, h); return s;
 }
 
+/* ---------- repository namespaces (store layout 2) and enforcement mode (crumb924) ----------
+ * Layout 1 (flat, the default and every store created before layout 2): records directly under the coordination root.
+ * Layout 2: <root>/LAYOUT holds exactly "crumb-coord-layout/2\n"; records live under <root>/repos/<repo-id>/; STORE_ID
+ * and .lock stay at the root. A root becomes layout 2 only through `crumb store-init` (refused while flat records
+ * exist), so a flat store is never reinterpreted. Repository id: CRUMB_REPO_ID, else git config crumb.repoId, else the
+ * origin remote URL normalised to <owner>/<repo> (lowercase); never the filesystem path. */
+#define LAYOUT_FILE "LAYOUT"
+#define LAYOUT_V2 "crumb-coord-layout/2\n"
+static void collect_json(const char *dir, char ***out, size_t *n);
+static int id_char(char c, int agent) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-' || (agent && c == '@');
+}
+static int alnum_c(char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9'); }
+/* ^[A-Za-z0-9][A-Za-z0-9_.@-]{0,159}$ (layout 2 and enforcement mode: used verbatim as the record name, no aliases) */
+static int agent_ok(const char *a) {
+    size_t n = strlen(a);
+    if (n < 1 || n > 160 || !alnum_c(a[0])) return 0;
+    for (size_t i = 0; i < n; i++) if (!id_char(a[i], 1)) return 0;
+    return 1;
+}
+static void agent_require(const Plane *p, const char *agent) {   /* p NULL: before resolution (enforcement only) */
+    if (!(g_enforce || (p && p->layout == 2)) || agent_ok(agent)) return;
+    die("AGENT_ID_INVALID: agent id \"%s\" must match ^[A-Za-z0-9][A-Za-z0-9_.@-]{0,159}$ (%s uses it verbatim; nothing is rewritten into an alias)", agent, g_enforce ? "enforcement mode" : "layout 2");
+}
+/* ^[A-Za-z0-9][A-Za-z0-9._-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)?$; the second component may not be a record directory name
+ * (dirs, agents, continuations, ledger), or namespace X/dirs would nest inside namespace X. */
+static int repo_id_ok(const char *s) {
+    size_t n = strlen(s);
+    if (n < 1 || n > 200 || !alnum_c(s[0])) return 0;   /* a leading '/' (empty first component) would alias "x" (N2) */
+    const char *sl = strchr(s, '/');
+    if (sl && strchr(sl + 1, '/')) return 0;
+    for (const char *c = s; *c; c++) {
+        if (*c == '/') continue;
+        if ((c == s || c[-1] == '/') && !alnum_c(*c)) return 0;
+        if (!id_char(*c, 0)) return 0;
+    }
+    if (sl) {
+        const char *b = sl + 1;
+        if (!*b || !strcmp(b, "dirs") || !strcmp(b, "agents") || !strcmp(b, "continuations") || !strcmp(b, "ledger")) return 0;
+    }
+    return 1;
+}
+/* <owner>/<repo> from git@host:o/r(.git), ssh://[user@]host[:port]/o/r(.git), https://host/o/r(.git)(/); NULL for a
+ * local path or file:// URL (a path is never an identity) or anything not exactly two path components. */
+static char *repo_id_from_url(const char *url) {
+    const char *path = NULL, *se = strstr(url, "://");
+    if (se) {
+        if (!strncmp(url, "file:", 5)) return NULL;
+        const char *h = se + 3, *slash = strchr(h, '/');
+        if (!slash || slash == h) return NULL;
+        path = slash + 1;
+    } else {
+        const char *colon = strchr(url, ':'), *slash = strchr(url, '/');
+        if (!colon || colon == url || (slash && slash < colon)) return NULL;   /* local path, not scp-like */
+        path = colon + 1;
+    }
+    char *c = xstrdup(path); size_t n = strlen(c);
+    while (n && c[n - 1] == '/') c[--n] = 0;
+    if (n > 4 && !strcmp(c + n - 4, ".git")) c[n -= 4] = 0;
+    while (n && c[n - 1] == '/') c[--n] = 0;
+    char *s = c; while (*s == '/') s++;
+    for (char *q = s; *q; q++) if (*q >= 'A' && *q <= 'Z') *q = (char)(*q - 'A' + 'a');
+    if (!strchr(s, '/') || !repo_id_ok(s)) return NULL;
+    return xstrdup(s);
+}
+static char *repo_id_resolve(const char *abs, const char **src) {
+    const char *e = getenv("CRUMB_REPO_ID"); char *v = NULL;
+    if (e && *e) { v = xstrdup(e); *src = "CRUMB_REPO_ID"; }
+    else { char *c = run_git(abs, "config --get crumb.repoId"); if (*c) { v = c; *src = "git config crumb.repoId"; } }
+    if (v) {
+        if (!repo_id_ok(v)) die_x(EXIT_STORE_ID, "REPO_ID_INVALID: %s is \"%s\"; expected <owner>/<repo> matching ^[A-Za-z0-9][A-Za-z0-9._-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)?$ (second component not dirs|agents|continuations|ledger)", *src, v);
+        return v;
+    }
+    char *url = run_git(abs, "config --get remote.origin.url");
+    *src = "origin remote URL";
+    return *url ? repo_id_from_url(url) : NULL;
+}
+/* 1: no LAYOUT marker (flat); 2: exactly LAYOUT_V2; anything else is refused (exit 3; hostile file exit 4) */
+static int read_layout(const char *root) {
+    char *lp = pjoin(root, LAYOUT_FILE); size_t n = 0;
+    char *b = read_bounded(lp, MAX_MARKER_BYTES, &n);
+    if (!b) { free(lp); return 1; }
+    if (n != strlen(LAYOUT_V2) || memcmp(b, LAYOUT_V2, n))
+        die_x(EXIT_STORE_ID, "STORE_LAYOUT_UNSUPPORTED: %s is not \"crumb-coord-layout/2\"; refusing (never rewritten)", lp);
+    free(b); free(lp);
+    return 2;
+}
+/* A relative CRUMB_COORD_ROOT / crumb.coordinationRoot is anchored at the worktree top-level, not the process cwd,
+ * and canonicalised (canon_path: realpath of what exists, the rest lexically), so the cwd never changes the store.
+ * An absolute root is used exactly as given unless it has a ".." component, which is canonicalised the same way:
+ * no store path ever carries a "..", and crumb_open refuses one. */
+static char *root_canon(const char *v, const char *top) {
+    if (v[0] == '/' && !has_dotdot(v)) return xstrdup(v);
+    char *j = v[0] == '/' ? xstrdup(v) : pjoin(top, v), *c = canon_path(j);
+    free(j);
+    return c;
+}
+static int bool_word(const char *v, const char *what) {   /* git-style boolean; anything else is refused */
+    if (!strcmp(v, "1") || !strcmp(v, "true") || !strcmp(v, "yes") || !strcmp(v, "on")) return 1;
+    if (!*v || !strcmp(v, "0") || !strcmp(v, "false") || !strcmp(v, "no") || !strcmp(v, "off")) return 0;
+    die("%s is \"%s\"; expected true or false", what, v);
+    return 0;
+}
+static void enforce_on(void) { g_enforce = 1; g_strict = 1; }
+/* git config crumb.enforce, read with git's own boolean conversion (`git config --bool --get`: a valueless key, yes,
+ * on, 1, any non-zero integer are true). 1 true, 0 false, -1 absent (git exit 1); any other outcome (a value git
+ * refuses as a boolean, git failing to run) is an error, never "absent" (crumb924 N1). */
+static int git_config_bool(const char *dir, const char *key) {
+    Buf q = {0}; bstr(&q, "'");
+    for (const char *p = dir; *p; p++) { if (*p == '\'') bstr(&q, "'\\''"); else bput(&q, p, 1); }
+    bstr(&q, "'");
+    size_t cn = q.n + strlen(key) + 64; char *cmd = xmalloc(cn);
+    snprintf(cmd, cn, "git -C %s config --bool --get %s 2>/dev/null", q.p, key);
+    FILE *f = popen(cmd, "r");
+    if (!f) die("cannot run git to read git config %s: %s", key, strerror(errno));
+    char t[64]; size_t n = fread(t, 1, sizeof t - 1, f); t[n] = 0;
+    int st = pclose(f), rc = st != -1 && WIFEXITED(st) ? WEXITSTATUS(st) : -1;
+    free(cmd); free(q.p);
+    while (n && (t[n - 1] == '\n' || t[n - 1] == '\r')) t[--n] = 0;
+    if (rc == 1 && !n) return -1;
+    if (rc == 0 && !strcmp(t, "true")) return 1;
+    if (rc == 0 && !strcmp(t, "false")) return 0;
+    die("cannot read git config %s as a boolean (git exit %d%s%s); refusing to guess whether enforcement is on", key, rc, n ? ", output " : "", t);
+    return 0;
+}
+static char *ns_path(const char *root, const char *repo_id) { char *r = pjoin(root, "repos"), *s = pjoin(r, repo_id); free(r); return s; }
+
+static char *shq(const char *s);
+/* run a git command in dir under the C locale: stdout (trailing newlines stripped) and the exit status (-1 when git
+ * could not be run or did not exit); stderr is captured into *err when err is non-NULL, else discarded */
+static char *git_rc(const char *dir, const char *args, int *rc, char **err) {
+    char *q = shq(dir); size_t cn = strlen(q) + strlen(args) + 96; char *cmd = xmalloc(cn);
+    if (err) snprintf(cmd, cn, "LC_ALL=C LANGUAGE=C git -C %s %s 2>&1 >/dev/null", q, args);
+    else snprintf(cmd, cn, "LC_ALL=C LANGUAGE=C git -C %s %s 2>/dev/null", q, args);
+    FILE *f = popen(cmd, "r"); Buf b = {0}; bstr(&b, "");
+    *rc = -1;
+    if (f) {
+        char t[4096]; size_t n;
+        while ((n = fread(t, 1, sizeof t, f)) > 0) bput(&b, t, n);
+        int st = pclose(f); *rc = st != -1 && WIFEXITED(st) ? WEXITSTATUS(st) : -1;
+    }
+    free(cmd); free(q);
+    while (b.n && (b.p[b.n - 1] == '\n' || b.p[b.n - 1] == '\r')) b.p[--b.n] = 0;
+    if (err) { *err = b.p; return xstrdup(""); }
+    return b.p;
+}
+static int has_git_ancestor(const char *abs) {   /* a .git entry (directory, gitdir file or link) in abs or above */
+    char *d = xstrdup(abs);
+    for (;;) {
+        char *g = pjoin(*d ? d : "/", ".git"); struct stat st; int hit = lstat(g, &st) == 0; free(g);
+        if (hit) { free(d); return 1; }
+        char *s = strrchr(d, '/'); if (!s || !*d) break;
+        *s = 0;
+    }
+    free(d); return 0;
+}
+/* git's own end-of-discovery diagnostic (LC_ALL=C), matched as the WHOLE stderr, never as a substring: git names
+ * files in other diagnostics ("bad config line 1 in file <path>"), so a path containing the words must not turn a
+ * configuration error into "outside any repository" (re-review of B7). The two forms git prints: */
+static int git_nonrepo_diagnostic(const char *err) {
+    if (!strcmp(err, "fatal: not a git repository (or any of the parent directories): .git")) return 1;
+    const char *head = "fatal: not a git repository (or any parent up to mount point ",
+               *tail = ")\nStopping at filesystem boundary (GIT_DISCOVERY_ACROSS_FILESYSTEM not set).";
+    size_t hl = strlen(head), tl = strlen(tail), n = strlen(err);
+    return n > hl + tl && !strncmp(err, head, hl) && !strcmp(err + n - tl, tail) && !memchr(err + hl, '\n', n - hl - tl);
+}
+/* Repository discovery (crumb924 B7). Returns the canonical work-tree top level, or NULL only when the directory is
+ * positively established to be outside any repository: git's own discovery ran to its end (its whole stderr is
+ * exactly the end-of-discovery diagnostic, exit 128, GIT_DIR unset), or, with GIT_DIR unset, git did not succeed and no .git entry exists in the directory or
+ * any ancestor. Every other failure (a malformed or unreadable .git/config, a .git file or GIT_DIR naming nothing,
+ * dubious ownership, git not runnable inside a repository, a top level that does not contain the directory) is
+ * GIT_DISCOVERY_FAILED (exit 1) in every mode, before anything is written: whether enforcement is configured cannot
+ * be known, so the .crumb.local fallback is never taken on a discovery error. */
+static char *git_discover(const char *abs) {
+    int rc; char *top = git_rc(abs, "rev-parse --show-toplevel", &rc, NULL), r[PATH_MAX];
+    if (rc == 0 && *top) {
+        if (!realpath(top, r)) die("GIT_DISCOVERY_FAILED: git reports top level %s for %s but it cannot be resolved: %s; refusing (no .crumb.local fallback on a discovery error)", top, abs, strerror(errno));
+        free(top); top = xstrdup(r);
+        size_t tl = strlen(top);
+        if (strncmp(abs, top, tl) || (abs[tl] && abs[tl] != '/'))
+            die("GIT_DISCOVERY_FAILED: %s is not inside its git top level %s; refusing (no .crumb.local fallback on a discovery error)", abs, top);
+        return top;
+    }
+    free(top);
+    char *err = NULL; int rc2; git_rc(abs, "rev-parse --show-toplevel", &rc2, &err);
+    const char *gd = getenv("GIT_DIR");
+    int nonrepo = (rc == 128 && rc2 == 128 && !(gd && *gd) && git_nonrepo_diagnostic(err))
+               || (rc != 0 && !(gd && *gd) && !has_git_ancestor(abs));
+    if (nonrepo) { free(err); return NULL; }
+    char *nl = strchr(err, '\n'); if (nl && !strncmp(err, "warning:", 8) && nl[1]) memmove(err, nl + 1, strlen(nl + 1) + 1);
+    if ((nl = strchr(err, '\n'))) *nl = 0;
+    die("GIT_DISCOVERY_FAILED: git cannot establish whether %s is inside a repository (git rev-parse exit %d%s%s); refusing before any write (no .crumb.local fallback on a discovery error; fix the repository or its .git/config)", abs, rc, *err ? ": " : "", err);
+    return NULL;
+}
 static Plane *plane_find(const char *dir) {   /* resolve the coordination root; no identity check yet */
-    char *abs = absdir(dir), *top = run_git(abs, "rev-parse --show-toplevel"), r[PATH_MAX];
-    if (!*top || !realpath(top, r)) return NULL;
-    top = xstrdup(r);
+    char *abs = absdir(dir), *top = git_discover(abs), r[PATH_MAX];
+    if (!top) {
+        if (g_enforce) die("ENFORCE_NO_REPOSITORY: %s is not inside a git repository; enforcement mode has no .crumb.local fallback", abs);
+        return NULL;
+    }
     size_t tl = strlen(top);
-    if (strncmp(abs, top, tl) || (abs[tl] && abs[tl] != '/')) return NULL;
+    if (!g_enforce && git_config_bool(abs, "crumb.enforce") == 1) enforce_on();
     Plane *p = xmalloc(sizeof *p); memset(p, 0, sizeof *p);
     p->abs = abs; p->top = top; p->rel = abs[tl] ? xstrdup(abs + tl + 1) : xstrdup(".");
     const char *env = getenv("CRUMB_COORD_ROOT");
-    if (env && *env) p->store = xstrdup(env);
-    else { char *cfg = run_git(abs, "config --get crumb.coordinationRoot"); if (*cfg) p->store = cfg; }
-    if (!p->store) {
+    if (env && *env) p->root = root_canon(env, top);
+    else { char *cfg = run_git(abs, "config --get crumb.coordinationRoot"); if (*cfg) p->root = root_canon(cfg, top); }
+    if (!p->root) {
         char *cd = run_git(abs, "rev-parse --git-common-dir");
         if (!*cd) die("inside a git repository (%s) but cannot resolve its common directory; set CRUMB_COORD_ROOT", top);
         char *full = cd[0] == '/' ? cd : pjoin(abs, cd);
         if (!realpath(full, r)) die("cannot resolve git common directory %s; set CRUMB_COORD_ROOT", full);
-        p->store = pjoin(r, "crumb/v1");
+        p->root = pjoin(r, "crumb/v1");
     }
     p->branch = run_git(abs, "symbolic-ref --short -q HEAD"); if (!*p->branch) p->branch = xstrdup("(detached)");
     p->head = run_git(abs, "rev-parse --short=12 HEAD");
     p->base = run_git(abs, "merge-base HEAD origin/main"); if (strlen(p->base) > 12) p->base[12] = 0;
     p->id = ident_resolve(abs);
+    p->layout = read_layout(p->root);
+    if (p->layout == 2 || g_enforce) p->repo_id = repo_id_resolve(abs, &p->repo_src);
+    p->store = p->layout == 1 ? xstrdup(p->root) : p->repo_id ? ns_path(p->root, p->repo_id) : NULL;
     return p;
+}
+static size_t count_json(const char *dir) { char **f = NULL; size_t n = 0; collect_json(dir, &f, &n); for (size_t i = 0; i < n; i++) free(f[i]); free(f); return n; }
+/* the conditions every coordination command needs on top of the store identity (enforcement mode fails closed) */
+static void plane_require(Plane *p) {
+    if (g_enforce && p->layout != 2)
+        die_x(EXIT_STORE_ID, "STORE_LAYOUT_V1: coordination root %s has layout 1 (flat, no repository namespaces); enforcement mode needs layout 2: `crumb store-init` on a new or empty root (see RFC-0002 section 2.7)", p->root);
+    if (p->layout != 2) return;
+    if (!p->repo_id)
+        die_x(EXIT_STORE_ID, "REPO_ID_MISSING: coordination root %s is namespaced (layout 2) but this repository has no id: set git config crumb.repoId <owner>/<repo> (or CRUMB_REPO_ID), or an origin remote URL host/<owner>/<repo>", p->root);
+    char *fd = pjoin(p->root, "dirs"), *fa = pjoin(p->root, "agents");
+    if (count_json(fd) + count_json(fa)) {
+        if (g_enforce) die_x(EXIT_STORE_ID, "STORE_LAYOUT_MIXED: layout-2 root %s also holds flat (layout 1) records under dirs/ or agents/ (an older crumb wrote them); their locks are invisible here: refusing", p->root);
+        fprintf(stderr, "crumb: warning: STORE_LAYOUT_MIXED: layout-2 root %s also holds flat records under dirs/ or agents/; they are ignored (enforcement mode refuses this)\n", p->root);
+    }
+    free(fd); free(fa);
+    char *lp = pjoin(p->abs, ".crumb.local"); struct stat st;
+    if (lstat(lp, &st) == 0) fprintf(stderr, "crumb: warning: %s is ignored: a layout-2 store never imports .crumb.local\n", lp);
+    free(lp);
 }
 /* every coordination command: resolve the root, then check its identity before touching anything in it */
 static Plane *plane_resolve(const char *dir) {
     Plane *p = plane_find(dir);
-    if (p) ident_gate(&p->id, p->store, 0);
+    if (p) { ident_gate(&p->id, p->root, 0); plane_require(p); }
     return p;
+}
+/* no repository (explain, checkpoint/resume with only CRUMB_COORD_ROOT): the records base of that root, after the
+ * env-only identity check; a layout-2 root needs CRUMB_REPO_ID (there is no git config or origin to read) */
+static char *env_store(const char *root) {
+    Ident id = ident_resolve(NULL); ident_gate(&id, root, 0);
+    if (read_layout(root) != 2) return xstrdup(root);
+    const char *r = getenv("CRUMB_REPO_ID");
+    if (!r || !*r) die_x(EXIT_STORE_ID, "REPO_ID_MISSING: coordination root %s is namespaced (layout 2); outside a repository set CRUMB_REPO_ID", root);
+    if (!repo_id_ok(r)) die_x(EXIT_STORE_ID, "REPO_ID_INVALID: CRUMB_REPO_ID is \"%s\"", r);
+    return ns_path(root, r);
 }
 /* repository-relative key for a target: <dir>/<target> if that exists, else <target> from the
  * repo root if that exists, else repo-relative as given when it contains '/', else <dir>/<target>.
@@ -756,7 +1130,14 @@ static char *target_key(const Plane *p, const char *target, const char *rel) {
     die("target %s escapes the repository", target);
     return NULL;
 }
-static void fsync_dir(const char *dir) { int fd = open(dir, O_RDONLY); if (fd >= 0) { (void)fsync(fd); close(fd); } }
+/* directory fsync after a rename or link; best effort normally, fatal in enforcement mode (EINVAL: the filesystem
+ * cannot sync directories, which is not a failure to persist) */
+static void fsync_dir(const char *dir) {
+    int fd = crumb_open_follow(dir, O_RDONLY | O_DIRECTORY, 0);
+    if (fd < 0) { if (g_enforce) die("cannot open directory %s to sync it: %s", dir, strerror(errno)); return; }
+    if (fsync(fd) != 0 && g_enforce && errno != EINVAL) die("fsync of directory %s failed: %s", dir, strerror(errno));
+    close(fd);
+}
 static void durable_write(const char *store, const char *path, const char *data) {   /* tmp, fsync, rename, fsync dir */
     size_t len = strlen(data);
     if (len > MAX_RECORD_BYTES) die_x(EXIT_REFUSED, "REFUSED_RECORD: %s would be larger than %zu bytes; refusing to write it", path, MAX_RECORD_BYTES);
@@ -765,7 +1146,7 @@ static void durable_write(const char *store, const char *path, const char *data)
     if (lstat(path, &st) == 0 && !S_ISREG(st.st_mode)) die_x(EXIT_REFUSED, "REFUSED_RECORD: %s %s; refusing to replace it (fix or move it aside)", path, kind_of(st.st_mode));
     char *dd = dir_of(path); mkdir_p(dd);
     size_t tn = strlen(path) + 32; char *tmp = xmalloc(tn);
-    snprintf(tmp, tn, "%s.tmp%ld", path, (long)getpid());
+    xsnprintf(tmp, tn, "%s.tmp%ld", path, (long)getpid());
     int fd = create_temp(tmp);
     write_all(fd, data, len, tmp);
     if (fsync(fd) != 0) die("fsync failed: %s", tmp);
@@ -773,26 +1154,96 @@ static void durable_write(const char *store, const char *path, const char *data)
     if (rename(tmp, path) != 0) die("rename failed: %s", path);
     fsync_dir(dd);
 }
-static Txn *txn_begin(Plane *p, int mutate) {
-    Txn *t = xmalloc(sizeof *t); memset(t, 0, sizeof *t); t->p = p; t->fd = -1;
-    if (!mutate) return t;
-    static const char *sub[] = { "dirs", "agents", "continuations", "ledger", NULL };
-    for (int i = 0; sub[i]; i++) { char *d = pjoin(p->store, sub[i]); mkdir_p(d); free(d); }
-    char *lp = pjoin(p->store, ".lock");
+/* fcntl lock on <root>/.lock. create: open O_CREAT, exclusive lock (mutations); else shared lock on an existing lock
+ * file and -1 when there is none (crumb check: creates nothing). A planted FIFO, device, symlink or directory is refused. */
+static int root_lock(const char *root, int create) {
+    char *lp = pjoin(root, ".lock");
     struct stat st;   /* the lock file is a store file too: a planted FIFO, device, symlink or directory is refused */
-    if (lstat(lp, &st) == 0 && !S_ISREG(st.st_mode)) refuse(lp, kind_of(st.st_mode));
-    t->fd = open(lp, O_RDWR | O_CREAT | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC, 0644);
-    if (t->fd < 0) {
+    if (lstat(lp, &st) == 0) { if (!S_ISREG(st.st_mode)) refuse(lp, kind_of(st.st_mode)); }
+    else if (!create) { if (errno == ENOENT) { free(lp); return -1; } if (errno == ENOTDIR) refuse(lp, "has a parent that is not a directory"); die("cannot stat %s: %s", lp, strerror(errno)); }
+    int fd = crumb_open(lp, (create ? O_RDWR | O_CREAT : O_RDONLY) | O_NONBLOCK, 0644);
+    if (fd < 0) {
+        if (!create && errno == ENOENT) { free(lp); return -1; }
         if (errno == ELOOP) refuse(lp, "is a symbolic link");
         if (errno == EISDIR) refuse(lp, "is a directory, not a regular file");
         die("cannot open %s: %s", lp, strerror(errno));
     }
-    if (fstat(t->fd, &st) != 0) die("cannot stat %s: %s", lp, strerror(errno));
+    if (fstat(fd, &st) != 0) die("cannot stat %s: %s", lp, strerror(errno));
     if (!S_ISREG(st.st_mode)) refuse(lp, kind_of(st.st_mode));
-    struct flock fl; memset(&fl, 0, sizeof fl); fl.l_type = F_WRLCK; fl.l_whence = SEEK_SET;
-    while (fcntl(t->fd, F_SETLKW, &fl) != 0) if (errno != EINTR) die("cannot lock %s: %s", lp, strerror(errno));
-    ident_gate(&p->id, p->store, 1);   /* under the lock: re-check the registered id, or create the marker once */
+    struct flock fl; memset(&fl, 0, sizeof fl); fl.l_type = create ? F_WRLCK : F_RDLCK; fl.l_whence = SEEK_SET;
+    while (fcntl(fd, F_SETLKW, &fl) != 0) if (errno != EINTR) die("cannot lock %s: %s", lp, strerror(errno));
+    free(lp);
+    return fd;
+}
+/* A root that any command has initialized or written: layout 2 (store-init creates .lock with LAYOUT), enforcement,
+ * or a layout-1 root holding a marker or record directories (every first mutation creates .lock before them). Only a
+ * never-used compatibility root may lack .lock; for crumb check that is plain absence (crumb924 B4). */
+static int store_used(const Plane *p) {
+    if (p->layout == 2 || g_enforce) return 1;
+    static const char *names[] = { STORE_ID_FILE, LAYOUT_FILE, "dirs", "agents", NULL };
+    for (int i = 0; names[i]; i++) { char *f = pjoin(p->root, names[i]); struct stat st; int e = lstat(f, &st) == 0; free(f); if (e) return 1; }
+    return 0;
+}
+static Txn *txn_begin(Plane *p, int mutate) {
+    Txn *t = xmalloc(sizeof *t); memset(t, 0, sizeof *t); t->p = p; t->fd = -1;
+    if (!mutate) return t;
+    mkdir_p(p->root);
+    t->fd = root_lock(p->root, 1);   /* the lock exists before any record directory (crumb check relies on it, B4) */
+    static const char *sub[] = { "dirs", "agents", "continuations", "ledger", NULL };
+    for (int i = 0; sub[i]; i++) { char *d = pjoin(p->store, sub[i]); mkdir_p(d); free(d); }
+    ident_gate(&p->id, p->root, 1);   /* under the lock: re-check the registered id, or create the marker once */
+    if (read_layout(p->root) != p->layout) die("STORE_LAYOUT_CHANGED: coordination root %s changed layout while this command ran (store-init); retry", p->root);
     return t;
+}
+/* Strict lease schema (enforcement mode always; crumb check for the leases it judges): holder a non-empty string,
+ * session a non-empty string, acquired_at YYYY-MM-DDTHH:MM:SSZ, ttl_seconds an integer in 1..MAX_TTL (what claim
+ * accepts), generation an integer >= 1. Lenient (check
+ * outside enforcement mode, layout-1 stores written by older tools): a parseable acquired_at, ttl_seconds >= 0 (default
+ * LOCK_TTL when absent, as the sweep does), generation optional (0 when absent). Returns NULL or what is wrong. */
+typedef struct { const char *holder, *session; long acq, ttl; unsigned long long gen; } Lease;
+static const char *lease_parse(const J *e, int strict, Lease *l) {
+    memset(l, 0, sizeof *l);
+    if (!e || e->t != JOBJ) return "is not an object";
+    J *h = jget(e, "holder"); if (!h || h->t != JSTR || !*h->s) return "holder is not a non-empty string";
+    l->holder = h->s;
+    J *a = jget(e, "acquired_at");
+    if (!a || a->t != JSTR || !(strict ? iso_strict(a->s, &l->acq) : (l->acq = parse_iso(a->s)) >= 0)) return "acquired_at is not a YYYY-MM-DDTHH:MM:SSZ timestamp";
+    J *t = jget(e, "ttl_seconds"); unsigned long long v = LOCK_TTL;
+    if (t || strict) { if (!t || t->t != JNUM || !u64_str(t->s, &v) || v > (strict ? (unsigned long long)MAX_TTL : (unsigned long long)LONG_MAX / 4) || (strict && !v)) return strict ? "ttl_seconds is not an integer in 1..315360000" : "ttl_seconds is not a positive integer"; }
+    l->ttl = (long)v;
+    J *g = jget(e, "generation");
+    if (g ? g->t != JNUM || !u64_str(g->s, &l->gen) || (strict && !l->gen) : strict) return "generation is not an integer >= 1";
+    if (strict) { J *s = jget(e, "session"); if (!s || s->t != JSTR || !*s->s) return "session is not a non-empty string"; l->session = s->s; }
+    return NULL;
+}
+static void malformed(const char *path, const char *key, const char *why) {
+    die("MALFORMED_LEASE: %s: lease \"%s\" %s; refusing (enforcement mode never prunes or takes over a malformed lease: fix or move it aside)", path, key, why);
+}
+/* enforcement mode: a dir record must be exactly what this tool writes before anything is swept or decided */
+static void dir_record_strict(const char *path, const J *j, const char *label) {
+    J *lk = jget(j, "locks"), *gens = jget(j, "generations");
+    if (lk && lk->t != JOBJ) die("MALFORMED_RECORD: %s: \"locks\" is not an object; refusing", path);
+    if (gens && gens->t != JOBJ) die("MALFORMED_RECORD: %s: \"generations\" is not an object; refusing", path);
+    if (gens) for (size_t i = 0; i < gens->n; i++) { unsigned long long g; if (gens->v[i]->t != JNUM || !u64_str(gens->v[i]->s, &g)) die("MALFORMED_RECORD: %s: generations[\"%s\"] is not an integer; refusing", path, gens->k[i]); }
+    if (lk) for (size_t i = 0; i < lk->n; i++) {
+        Lease l; const char *why = lease_parse(lk->v[i], 1, &l);
+        if (why) malformed(path, lk->k[i], why);
+        char *nk = norm_path(lk->k[i]), *kd = nk ? key_dir(nk) : NULL;
+        if (!nk || strcmp(nk, lk->k[i]) || strcmp(kd, label)) malformed(path, lk->k[i], "is not a normalised key of this directory record");
+        if (jgen(gens, lk->k[i]) != l.gen) malformed(path, lk->k[i], "has a generation that differs from the record's generations counter (the tool keeps them equal; a renewal would lower the high-water mark or reuse a token)");
+        free(nk); free(kd);
+    }
+}
+/* enforcement mode: an existing agent record must be what agent_set writes, or session ownership cannot be judged
+ * (crumb924 B3: a malformed session is an error, never "no session") */
+static void agent_record_strict(const char *path, const J *j) {
+    const char *why = NULL; J *s = jget(j, "session"), *u = jget(j, "updated_at"), *t = jget(j, "ttl_seconds"), *a = jget(j, "agent");
+    long acq; unsigned long long v;
+    if (!a || a->t != JSTR || !*a->s) why = "agent is not a non-empty string";
+    else if (!s || s->t != JSTR || !*s->s) why = "session is not a non-empty string";
+    else if (!u || u->t != JSTR || !iso_strict(u->s, &acq)) why = "updated_at is not a YYYY-MM-DDTHH:MM:SSZ timestamp";
+    else if (!t || t->t != JNUM || !u64_str(t->s, &v) || !v || v > (unsigned long long)MAX_TTL) why = "ttl_seconds is not an integer in 1..315360000";
+    if (why) die("MALFORMED_RECORD: %s: agent record: %s; refusing (enforcement mode never treats malformed session metadata as absent: fix or move it aside)", path, why);
 }
 static Rec *rec_load(Txn *t, const char *path, int agent, const char *label) {
     for (size_t i = 0; i < t->n; i++) if (!strcmp(t->r[i]->path, path)) return t->r[i];
@@ -800,11 +1251,13 @@ static Rec *rec_load(Txn *t, const char *path, int agent, const char *label) {
     if (t->n == t->cap) { t->cap = t->cap ? t->cap * 2 : 16; t->r = xrealloc(t->r, t->cap * sizeof *t->r); }
     t->r[t->n++] = r;
     r->path = xstrdup(path); r->agent = agent;
-    check_real_parents(t->p->store, path);   /* never read through a symlinked directory (listing does not follow one) */
+    check_real_parents(t->p->root, path);   /* never read through a symlinked directory (listing does not follow one) */
     size_t len = 0; char *txt = read_bounded(path, MAX_RECORD_BYTES, &len); J *j = txt && strlen(txt) == len ? jparse(txt) : NULL;
     if (txt && (!j || j->t != JOBJ)) die("%s is not valid JSON; fix or move it aside", path);
     r->existed = txt != NULL;
     if (!j) j = jnew(JOBJ);
+    if (!agent && g_enforce) dir_record_strict(path, j, label);
+    if (agent && g_enforce && r->existed) agent_record_strict(path, j);
     if (!agent) {
         if (!jget(j, "schema_version")) jset(j, "schema_version", jstr(SCHEMA));
         if (!jget(j, "directory")) jset(j, "directory", jstr(label));
@@ -812,38 +1265,68 @@ static Rec *rec_load(Txn *t, const char *path, int agent, const char *label) {
     r->root = j; r->before = jdump(j);
     if (agent) {
         long u = parse_iso(jstrval(j, "updated_at"));
-        if (r->existed && (u < 0 || (long)time(NULL) - u > jlong(j, "ttl_seconds", SCENT_TTL))) r->dead = 1;
+        if (r->existed && (u < 0 || now_epoch() - u > jlong(j, "ttl_seconds", SCENT_TTL))) r->dead = 1;
     } else sweep(j);
     return r;
 }
+/* Directory record path. "." is dirs/_root.json in both layouts. Layout 2 (crumb924 B2): a first component that
+ * starts with '_' gets one more '_' (`_root/x` -> dirs/__root/x.json, `_root` -> dirs/__root.json), so no repository
+ * directory can map onto dirs/_root.json or dirs/_root/ and every record name maps back to exactly one key directory
+ * (dir_label). Layout 1 keeps its historical mapping (where `_root` shares the root record) byte for byte. */
 static char *dir_path(const Plane *p, const char *rel) {
     if (!strcmp(rel, ".")) return pjoin(p->store, "dirs/_root.json");
-    char *a = pjoin(p->store, "dirs"), *b = pjoin(a, rel), *c = xmalloc(strlen(b) + 6);
-    sprintf(c, "%s.json", b); return c;
+    char *a = pjoin(p->store, "dirs"), *b, *c;
+    if (p->layout == 2 && rel[0] == '_') { size_t bn = strlen(a) + strlen(rel) + 3; b = xmalloc(bn); xsnprintf(b, bn, "%s/_%s", a, rel); }
+    else b = pjoin(a, rel);
+    size_t cn = strlen(b) + 6; c = xmalloc(cn);
+    xsnprintf(c, cn, "%s.json", b); free(a); free(b); return c;
+}
+/* the key directory a record name under dirs/ (without .json) stands for; NULL when no key maps to that name */
+static char *dir_label(const Plane *p, const char *name) {
+    if (!strcmp(name, "_root")) return xstrdup(".");
+    if (p->layout != 2 || name[0] != '_') return xstrdup(name);
+    return name[1] == '_' ? xstrdup(name + 1) : NULL;
 }
 static Rec *dir_rec(Txn *t, const char *rel) { return rec_load(t, dir_path(t->p, rel), 0, rel); }
 static char *agent_path(const Plane *p, const char *agent) {
-    char *n = xstrdup(agent);
-    for (char *s = n; *s; s++) if (!((*s >= 'a' && *s <= 'z') || (*s >= 'A' && *s <= 'Z') || (*s >= '0' && *s <= '9') || *s == '.' || *s == '-' || *s == '_')) *s = '_';
-    char *a = pjoin(p->store, "agents"), *b = pjoin(a, n), *c = xmalloc(strlen(b) + 6);
-    sprintf(c, "%s.json", b); return c;
+    char *n = xstrdup(agent);   /* layout 1: legacy sanitising (aliases possible); layout 2: the validated id verbatim */
+    if (p->layout != 2) for (char *s = n; *s; s++) if (!((*s >= 'a' && *s <= 'z') || (*s >= 'A' && *s <= 'Z') || (*s >= '0' && *s <= '9') || *s == '.' || *s == '-' || *s == '_')) *s = '_';
+    char *a = pjoin(p->store, "agents"), *b = pjoin(a, n); size_t cn = strlen(b) + 6; char *c = xmalloc(cn);
+    xsnprintf(c, cn, "%s.json", b); return c;
 }
 static Rec *agent_rec(Txn *t, const char *agent) { return rec_load(t, agent_path(t->p, agent), 1, NULL); }
 /* Record names under dir, recursively, without opening any entry: lstat, so real subdirectories are walked and
  * symlinked directories are not (no escape from the store, no symlink loop). Every other name ending in .json is
- * returned whatever its type; read_bounded then refuses a non-regular one without opening it. */
-static void collect_json(const char *dir, char ***out, size_t *n) {
-    DIR *d = opendir(dir); if (!d) return;
+ * returned whatever its type; read_bounded then refuses a non-regular one without opening it. A missing top
+ * directory is empty state. Any other failure to list (permissions, I/O, a vanished subdirectory) is fatal in
+ * enforcement mode and a stderr warning otherwise: it is never silently treated as empty. */
+static void walk_fail(const char *what, const char *path) {
+    if (g_enforce) die("STORE_UNREADABLE: cannot %s %s: %s; refusing (enforcement mode never treats unreadable state as empty)", what, path, strerror(errno));
+    fprintf(stderr, "crumb: warning: cannot %s %s: %s; records under it are ignored (enforcement mode refuses this)\n", what, path, strerror(errno));
+}
+static void collect_json_at(const char *dir, char ***out, size_t *n, int top) {
+    DIR *d = opendir(dir);
+    if (!d) { if (!(top && errno == ENOENT)) walk_fail("open directory", dir); return; }
     struct dirent *e;
-    while ((e = readdir(d))) {
+    for (;;) {
+        errno = 0;
+        if (!(e = readdir(d))) { if (errno) walk_fail("read directory", dir); break; }
         if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
         char *full = pjoin(dir, e->d_name); struct stat st;
-        if (lstat(full, &st) == 0 && S_ISDIR(st.st_mode)) collect_json(full, out, n);
+        int ls = lstat(full, &st);
+        if (ls != 0 && g_enforce) walk_fail("stat", full);
+        if (ls == 0 && S_ISLNK(st.st_mode)) {   /* never followed; in enforcement mode never skipped either (crumb924 B1) */
+            if (g_enforce) refuse(full, "is a symbolic link inside the coordination records (never followed; enforcement mode refuses to skip the records it may hide)");
+            size_t l = strlen(e->d_name);
+            if (!(l > 5 && !strcmp(e->d_name + l - 5, ".json"))) { fprintf(stderr, "crumb: warning: %s is a symbolic link; it is not walked and records under it are ignored (enforcement mode refuses this)\n", full); free(full); continue; }
+        }
+        if (ls == 0 && S_ISDIR(st.st_mode)) collect_json_at(full, out, n, 0);
         else { size_t l = strlen(e->d_name); if (l > 5 && !strcmp(e->d_name + l - 5, ".json")) { *out = xrealloc(*out, (*n + 1) * sizeof **out); (*out)[(*n)++] = full; continue; } }
         free(full);
     }
     closedir(d);
 }
+static void collect_json(const char *dir, char ***out, size_t *n) { collect_json_at(dir, out, n, 1); }
 static void txn_prune(Txn *t) {   /* load every record: expired entries drop out (written back on commit) */
     char **f = NULL; size_t n = 0;
     char *dd = pjoin(t->p->store, "dirs"), *ad = pjoin(t->p->store, "agents");
@@ -851,7 +1334,14 @@ static void txn_prune(Txn *t) {   /* load every record: expired entries drop out
     size_t pl = strlen(dd) + 1;
     for (size_t i = 0; i < n; i++) {
         char *rel = xstrdup(f[i] + pl); rel[strlen(rel) - 5] = 0;
-        rec_load(t, f[i], 0, !strcmp(rel, "_root") ? "." : rel);
+        char *label = dir_label(t->p, rel);
+        if (!label) {   /* layout 2: a '_' name no key maps to (an older layout-2 build wrote it, or it was planted) */
+            if (g_enforce) die("MALFORMED_RECORD: %s is not a directory record name of layout 2 (a first component starting with '_' is stored as '__'; dirs/_root.json is only the repository root); refusing (fix or move it aside)", f[i]);
+            fprintf(stderr, "crumb: warning: %s is not a directory record name of layout 2; it is ignored (enforcement mode refuses this)\n", f[i]);
+            free(rel); continue;
+        }
+        rec_load(t, f[i], 0, label);
+        free(rel);
     }
     char **g = NULL; size_t m = 0;
     collect_json(ad, &g, &m);
@@ -862,7 +1352,7 @@ static void txn_end(Txn *t, int commit) {
         Rec *r = t->r[i];
         if (r->dead) { if (unlink(r->path) == 0) { char *d = dir_of(r->path); fsync_dir(d); free(d); } continue; }
         char *now = jdump(r->root);
-        if (strcmp(now, r->before)) durable_write(t->p->store, r->path, now);
+        if (strcmp(now, r->before)) durable_write(t->p->root, r->path, now);
     }
     if (t->fd >= 0) close(t->fd);   /* releases the OS lock */
 }
@@ -882,7 +1372,8 @@ static int agent_has_lock(Txn *t, const char *agent) {
 }
 static void import_legacy(Txn *t) {   /* one-time merge of this worktree's .crumb.local into the shared store */
     Plane *p = t->p;
-    char *lp = pjoin(p->abs, ".crumb.local"), *txt = slurp(lp);
+    if (p->layout == 2) return;   /* layout 2 never imports .crumb.local (plane_require warns when one is present) */
+    char *lp = pjoin(p->abs, ".crumb.local"), *txt = read_local(lp);
     if (!txt) return;
     J *l = jparse(txt);
     if (!l || l->t != JOBJ) die("%s is not valid JSON; fix or move it aside", lp);
@@ -927,11 +1418,48 @@ static void print_lock(const char *key, const J *e) {
     printf("  lock    %-16s held by %s [%s]: %s  [%s]%s%s\n", key, sv(e, "holder"), sv(e, "branch"), sv(e, "intent"), sv(e, "acquired_at"),
            jstrval(e, "imported_from") ? " imported from " : "", jstrval(e, "imported_from") ? jstrval(e, "imported_from") : "");
 }
+/* anc is k itself or one of its ancestor keys ("." is the whole repository) */
+static int key_covers(const char *anc, const char *k) {
+    if (!strcmp(anc, ".") || !strcmp(anc, k)) return 1;
+    size_t n = strlen(anc);
+    return !strncmp(k, anc, n) && k[n] == '/';
+}
+/* enforcement mode: an agent id names exactly one live session; a second session presenting it is refused (exit 2).
+ * Live means a live heartbeat from another session, or a live lease of this id recorded by another session: the
+ * heartbeat can expire long before the lease, and the lease's session decides who may renew or close it (crumb924 B3).
+ * Every dir record is loaded and swept (txn_prune) before this runs, so the leases left are the live ones. */
+static int agent_in_use(Txn *t, const char *agent) {
+    if (!g_enforce) return 0;
+    Rec *r = agent_rec(t, agent);
+    const char *s = jstrval(r->root, "session");
+    char *me = session_id(agent);
+    if (r->existed && !r->dead && s && strcmp(s, me)) {
+        printf("BLOCKED agent %s is live in session %s, not this session %s (an agent id names one session: use <agent-name>.<session-id>)\n", agent, s, me);
+        free(me); return 1;
+    }
+    for (size_t i = 0; i < t->n; i++) if (!t->r[i]->agent) {
+        J *lk = jget(t->r[i]->root, "locks");
+        if (lk && lk->t == JOBJ) for (size_t k = 0; k < lk->n; k++) {
+            const char *h = jstrval(lk->v[k], "holder"), *ls = jstrval(lk->v[k], "session");
+            if (!h || strcmp(h, agent)) continue;
+            if (!ls) die("MALFORMED_LEASE: %s: lease \"%s\" has no session; refusing", t->r[i]->path, lk->k[k]);   /* dir_record_strict already refused it */
+            if (strcmp(ls, me)) {
+                printf("BLOCKED agent %s is live in session %s, not this session %s (live lease on %s generation %s; an agent id names one session: use <agent-name>.<session-id>)\n", agent, ls, me, lk->k[k], jget(lk->v[k], "generation") ? jget(lk->v[k], "generation")->s : "?");
+                free(me); return 1;
+            }
+        }
+    }
+    free(me);
+    return 0;
+}
 static int cmd_claim(const char *agent, const char *dir, const char *target, const char *intent, long ttl) {
     Plane *p = plane_resolve(dir);
     if (!p) return legacy_claim(agent, dir, target, intent, ttl);
+    agent_require(p, agent);
+    if (g_enforce && ttl <= 0) die("enforcement mode needs a positive ttl (got %ld)", ttl);
     char *key = target_key(p, target, p->rel), *td = key_dir(key);
     Txn *t = txn_begin(p, 1); txn_prune(t); import_legacy(t);
+    if (agent_in_use(t, agent)) { txn_end(t, 0); return 2; }
     Rec *tr = dir_rec(t, td);
     J *cur = jget(jobj_of(tr->root, "locks"), key);
     if (cur) {
@@ -942,21 +1470,37 @@ static int cmd_claim(const char *agent, const char *dir, const char *target, con
             return 2;
         }
     }
+    /* no overlap: another agent's valid lease on an ancestor or a descendant of key blocks too (expired ones are pruned) */
+    for (size_t i = 0; i < t->n; i++) if (!t->r[i]->agent) {
+        J *lk = jget(t->r[i]->root, "locks");
+        if (lk && lk->t == JOBJ) for (size_t k = 0; k < lk->n; k++) {
+            const char *h = jstrval(lk->v[k], "holder");
+            if (!h || !strcmp(h, agent) || !(key_covers(lk->k[k], key) || key_covers(key, lk->k[k]))) continue;
+            J *o = lk->v[k];
+            printf("BLOCKED %s held by %s on branch %s (worktree %s) since %s (%s) [overlapping lease on %s]\n", key, h, sv(o, "branch"), sv(o, "worktree"), sv(o, "acquired_at"), sv(o, "intent"), lk->k[k]);
+            txn_end(t, 1);
+            return 2;
+        }
+    }
     char ts[21]; now_iso(ts);
+    unsigned long long gen = gen_next(tr->root, tr->path, key, cur, agent);
     J *e = jnew(JOBJ);
     jset(e, "holder", jstr(agent)); jset(e, "session", jstr(session_id(agent))); jset(e, "target", jstr(key)); jset(e, "intent", jstr(intent));
     jset(e, "worktree", jstr(p->top)); jset(e, "branch", jstr(p->branch)); jset(e, "head", jstr(p->head)); jset(e, "base", jstr(p->base));
-    jset(e, "acquired_at", jstr(ts)); jset(e, "ttl_seconds", jnum(ttl));
+    jset(e, "acquired_at", jstr(ts)); jset(e, "ttl_seconds", jnum(ttl)); jset(e, "generation", jnum_u64(gen));
     jset(jobj_of(tr->root, "locks"), key, e);
     agent_set(t, agent, intent, SCENT_TTL > ttl ? SCENT_TTL : ttl);
     txn_end(t, 1);
-    printf("CLAIMED %s in %s as %s on %s (ttl %lds)\n", key, p->top, agent, p->branch, ttl);
+    printf("CLAIMED %s in %s as %s on %s (ttl %lds) generation %llu\n", key, p->top, agent, p->branch, ttl, gen);
     return 0;
 }
 static int cmd_update(const char *agent, const char *dir, const char *focus, long ttl) {
     Plane *p = plane_resolve(dir);
     if (!p) return legacy_update(agent, dir, focus, ttl);
+    agent_require(p, agent);
+    if (g_enforce && ttl <= 0) die("enforcement mode needs a positive ttl (got %ld)", ttl);   /* the strict agent record reader refuses ttl 0 */
     Txn *t = txn_begin(p, 1); txn_prune(t); import_legacy(t);
+    if (agent_in_use(t, agent)) { txn_end(t, 0); return 2; }
     agent_set(t, agent, focus, ttl);
     txn_end(t, 1);
     printf("SCENT %s in %s: %s (ttl %lds)\n", agent, p->abs, focus, ttl);
@@ -966,6 +1510,7 @@ static int cmd_whisper(const char *from, const char *dir, const char *to, const 
     if (prio && *prio && strcmp(prio, "low") && strcmp(prio, "normal") && strcmp(prio, "high") && strcmp(prio, "critical")) die("priority must be low|normal|high|critical");
     Plane *p = plane_resolve(dir);
     if (!p) return legacy_whisper(from, dir, to, msg, prio, tf);
+    agent_require(p, from);
     Txn *t = txn_begin(p, 1); txn_prune(t); import_legacy(t);
     whisper_add(dir_rec(t, p->rel)->root, from, to, msg, prio, tf);
     txn_end(t, 1);
@@ -978,8 +1523,10 @@ static int cmd_close(const char *agent, const char *dir, const char *target, con
     if (!good) die("action must be create|modify|delete|audit|test|build");
     Plane *p = plane_resolve(dir);
     if (!p) return legacy_close(agent, dir, target, action, msg);
+    agent_require(p, agent);
     char *key = target_key(p, target, p->rel), *td = key_dir(key);
     Txn *t = txn_begin(p, 1); txn_prune(t); import_legacy(t);
+    if (agent_in_use(t, agent)) { txn_end(t, 0); return 2; }
     Rec *tr = dir_rec(t, td);
     J *lk = jobj_of(tr->root, "locks"), *cur = jget(lk, key);
     const char *intent = "";
@@ -996,8 +1543,77 @@ static int cmd_close(const char *agent, const char *dir, const char *target, con
     printf("CLOSED %s in %s by %s (%s)%s\n", key, p->top, agent, action, cur ? "" : " [no lock was held]");
     return 0;
 }
+/* check <agent> <dir> <target> [--generation N] (crumb924; the pre-write guard the session bridge calls).
+ * Read-only: a shared fcntl lock on <root>/.lock (never created) for a consistent read; nothing is created, swept,
+ * pruned or written. The leases on target and on every ancestor key (up to "." = the whole repository) are judged
+ * with the strict schema in enforcement mode (lenient otherwise; malformed = exit 1 either way). Exit 0 only when a
+ * valid lease on target or an ancestor is held by exactly <agent>, no other agent holds a valid lease on target or
+ * an ancestor, and (when given) the nearest such lease has generation N and key K. Generations are counted per key,
+ * so a bare number is ambiguous across keys (an ancestor lease can carry the same number later); a writer that
+ * re-checks a token passes both --key and --generation, exactly as printed on the HELD line. Exit 2 otherwise. */
+static int cmd_check(const char *agent, const char *dir, const char *target, int has_want, unsigned long long want, const char *want_key) {
+    Plane *p = plane_resolve(dir);
+    if (!p) die("check needs a git repository: %s", dir);
+    agent_require(p, agent);
+    char *key = target_key(p, target, p->rel);
+    int fd = root_lock(p->root, 0);
+    if (fd < 0 && store_used(p))   /* crumb924 B4: an initialized store without its lock is broken, not empty */
+        die("STORE_LOCK_MISSING: coordination root %s is in use (layout %d%s) but has no .lock; refusing to report a lease without a consistent read (check never creates the lock)", p->root, p->layout, g_enforce ? ", enforcement mode" : "");
+    ident_gate(&p->id, p->root, 0);   /* again under the lock: the root may have been swapped meanwhile */
+    if (read_layout(p->root) != p->layout) die("STORE_LAYOUT_CHANGED: coordination root %s changed layout while this command ran (store-init); retry", p->root);
+    long now = now_epoch();
+    const char *mine_key = NULL, *other_key = NULL, *exp_key = NULL; Lease mine, other, gone;
+    memset(&mine, 0, sizeof mine); memset(&other, 0, sizeof other); memset(&gone, 0, sizeof gone);
+    char *k = xstrdup(key), *loaded_path = NULL; J *rec = NULL;
+    for (;;) {
+        char *kd = key_dir(k), *path = dir_path(p, kd);
+        if (!loaded_path || strcmp(loaded_path, path)) {
+            check_real_parents(p->root, path);
+            size_t len = 0; char *txt = read_bounded(path, MAX_RECORD_BYTES, &len);
+            rec = txt && strlen(txt) == len ? jparse(txt) : NULL;
+            if (txt && (!rec || rec->t != JOBJ)) die("%s is not valid JSON; fix or move it aside", path);
+            if (rec && g_enforce) dir_record_strict(path, rec, kd);
+            J *lk0 = jget(rec, "locks");
+            if (lk0 && lk0->t != JOBJ) die("MALFORMED_RECORD: %s: \"locks\" is not an object; refusing", path);
+            loaded_path = path;
+        }
+        J *e = jget(jget(rec, "locks"), k);
+        if (e) {
+            Lease l; const char *why = lease_parse(e, g_enforce, &l);
+            if (why) malformed(loaded_path, k, why);
+            int valid = now - l.acq <= l.ttl;   /* now - acquired_at == ttl is still valid; ttl + 1 is expired */
+            if (!valid) { if (!exp_key) { exp_key = xstrdup(k); gone = l; } }
+            else if (!strcmp(l.holder, agent)) { if (!mine_key) { mine_key = xstrdup(k); mine = l; } }
+            else if (!other_key) { other_key = xstrdup(k); other = l; }
+        }
+        if (!strcmp(k, ".")) break;
+        char *up = strchr(k, '/') ? dir_of(k) : xstrdup(".");
+        free(k); k = up; free(kd);
+    }
+    if (fd >= 0) close(fd);
+    char ex[21];
+    if (other_key) {
+        iso_of(other.acq + other.ttl, ex);
+        printf("REFUSED held-by %s %s key %s generation %llu expires %s\n", other.holder, key, other_key, other.gen, ex);
+        return 2;
+    }
+    if (mine_key) {
+        iso_of(mine.acq + mine.ttl, ex);
+        if (want_key && strcmp(mine_key, want_key)) { printf("REFUSED key %s!=%s %s generation %llu by %s expires %s\n", mine_key, want_key, key, mine.gen, agent, ex); return 2; }
+        if (has_want && mine.gen != want) { printf("REFUSED generation %llu!=%llu %s key %s by %s expires %s\n", mine.gen, want, key, mine_key, agent, ex); return 2; }
+        printf("HELD %s by %s key %s generation %llu expires %s\n", key, agent, mine_key, mine.gen, ex);
+        return 0;
+    }
+    if (exp_key) {
+        iso_of(gone.acq + gone.ttl, ex);
+        printf("REFUSED expired %s key %s holder %s generation %llu expired %s\n", key, exp_key, gone.holder, gone.gen, ex);
+        return 2;
+    }
+    printf("REFUSED absent %s (no lease on it or any ancestor)\n", key);
+    return 2;
+}
 static void print_agent(const J *e, const char *name) {
-    long u = parse_iso(jstrval(e, "updated_at")), age = u < 0 ? -1 : (long)time(NULL) - u;
+    long u = parse_iso(jstrval(e, "updated_at")), age = u < 0 ? -1 : now_epoch() - u;
     printf("  agent   %-16s branch %s  focus: %s  heartbeat %lds ago  [%s]\n", name, sv(e, "branch"), sv(e, "focus"), age, sv(e, "worktree"));
 }
 static int cmd_sniff(const char *agent, const char *dir) {   /* SPEC 5.1 + RFC-0002 */
@@ -1007,6 +1623,7 @@ static int cmd_sniff(const char *agent, const char *dir) {   /* SPEC 5.1 + RFC-0
         printf("shared coordination: none (not a git repository)\n");
         return r;
     }
+    agent_require(p, agent);
     char *cp = pjoin(p->abs, ".crumb"), *txt = slurp(cp); J *c = txt ? jparse(txt) : NULL;
     printf("sniff %s as %s\n", p->abs, agent);
     if (c) {
@@ -1015,7 +1632,9 @@ static int cmd_sniff(const char *agent, const char *dir) {   /* SPEC 5.1 + RFC-0
         if (inv && inv->t == JARR) for (size_t i = 0; i < inv->n; i++) if (inv->v[i]->t == JSTR) printf("  invariant: %s\n", inv->v[i]->s);
     } else printf("  no .crumb here\n");
     Txn *t = txn_begin(p, 0); txn_prune(t); import_legacy(t);   /* read side: merged in memory, never saved */
-    printf("shared coordination: ACTIVE\n  common root: %s\n  this worktree: %s [%s %s]\nACTIVE AGENTS\n", p->store, p->top, p->branch, p->head);
+    printf("shared coordination: ACTIVE\n  common root: %s\n", p->root);
+    if (p->layout == 2) printf("  repository: %s (layout 2, id from %s)\n", p->repo_id, p->repo_src);
+    printf("  this worktree: %s [%s %s]\nACTIVE AGENTS\n", p->top, p->branch, p->head);
     int any = 0;
     for (size_t i = 0; i < t->n; i++) if (t->r[i]->agent && !t->r[i]->dead && jget(t->r[i]->root, "updated_at")) { print_agent(t->r[i]->root, sv(t->r[i]->root, "agent")); any = 1; }
     if (!any) printf("  (none)\n");
@@ -1324,7 +1943,7 @@ static void walk_list(const char *path, const char *rel, int depth, int validate
             }
         }
     }
-    if (!validate && !g_skip_local && slurp(lp)) {
+    if (!validate && !g_skip_local && read_local(lp)) {
         Local l = local_open(path);   /* read side: sweep applied in memory, never saved */
         J *sc = jget(l.root, "active_scents"), *lk = jget(l.root, "locks"), *wh = jget(l.root, "whispers");
         if ((sc && sc->n) || (lk && lk->n) || (wh && wh->n)) { t->n_local++; printf("%s\n", rel); show_local(path, l.root, NULL); }
@@ -1426,7 +2045,8 @@ static void lr_add(const char *lane, const char *note, const char *ref, long pr,
     LaneRef *r = &g_lr[g_nlr++]; r->lane = xstrdup(lane); r->note = xstrdup(note); r->ref = xstrdup(ref); r->pr = pr; r->repo = repo ? xstrdup(repo) : NULL; r->sha = sha ? xstrdup(sha) : NULL; r->id = id;
 }
 static void parse_lane_file(const char *path) {
-    FILE *f = fopen(path, "r"); if (!f) return;
+    int lfd = crumb_open_follow(path, O_RDONLY, 0); if (lfd < 0) return;   /* the operator's own report (may be a link) */
+    FILE *f = fdopen(lfd, "r"); if (!f) { close(lfd); return; }
     const char *bn = base_of(path), *fl = strstr(bn, "lane"); char filelane[24] = "";
     if (fl && isdigit((unsigned char)fl[4])) { int k = 0; fl += 4; while (isdigit((unsigned char)*fl) && k < 8) { filelane[k++] = *fl++; } filelane[k] = 0; }
     char *line = NULL; size_t lc = 0; ssize_t len; static int idc = 0; int id;
@@ -1537,7 +2157,7 @@ static void backfill_node(const Node *n, int depth, const char *repo, BfStats *s
 }
 static int cmd_backfill(const char *root, const char *since, int dry) {
     char *r = absdir(root);
-    char *home = getenv("HOME"); if (!home) home = "";
+    char *home = getenv("HOME"); home = home ? canon_dotdot(home) : xstrdup("");
     load_ignore(r);
     Node *tree = scan(r, ".", 1);
     char *remote = run_git(r, "remote get-url origin"), *repo = xstrdup(base_of(remote));
@@ -1633,8 +2253,7 @@ static int cmd_explain(const char *target) {
         size_t tl = strlen(top);
         rel = abs[tl] ? xstrdup(abs + tl + 1) : xstrdup(".");
     } else rel = xstrdup(base_of(abs));
-    char *store = p ? p->store : (env && *env ? xstrdup(env) : NULL);
-    if (!p && store) { Ident id = ident_resolve(NULL); ident_gate(&id, store, 0); }   /* no repository: env-only identity */
+    char *store = p ? p->store : (env && *env ? env_store(canon_dotdot(env)) : NULL);   /* no repository: env-only identity */
     printf("EXPLAIN %s\n  repository path: %s\n", abs, rel);
 
     /* 1. nearest .crumb */
@@ -1734,6 +2353,7 @@ static int cmd_explain(const char *target) {
         collect_json(cd, &f, &n);
         for (size_t i = 0; i < n; i++) {
             char *txt = read_bounded(f[i], MAX_RECORD_BYTES, NULL); J *c = txt ? jparse(txt) : NULL;
+            if (g_enforce && (!c || c->t != JOBJ)) die("%s is not valid JSON; refusing (enforcement mode never skips unreadable state)", f[i]);
             if (!c || c->t != JOBJ || !jget(c, "identity") || !cont_matches(c, rel)) continue;
             nmatch++;
             J *ev = jget(c, "evidence");
@@ -1765,13 +2385,20 @@ static char *cc_path(void) {
     const char *h = getenv("HOME");
     if (!h || !*h) die("HOME is not set; set CRUMB_CC to the path of cc.sh");
     size_t n = strlen(h) + 64; char *s = xmalloc(n);
-    snprintf(s, n, "%s/.claude/skills/checkpoint/scripts/cc.sh", h); return s;
+    xsnprintf(s, n, "%s/.claude/skills/checkpoint/scripts/cc.sh", h); return s;
 }
-static void cc_env(Plane *p) {   /* records must land in <coordination root>/continuations */
+static void cc_env(Plane *p) {   /* records must land in <coordination root>/continuations (layout 2: the namespace's) */
     const char *env = getenv("CRUMB_COORD_ROOT");
-    if (p) setenv("CRUMB_COORD_ROOT", p->store, 1);
+    if (p && p->layout == 2) {
+        char *cs = pjoin(p->store, "continuations");
+        setenv("CRUMB_COORD_ROOT", p->root, 1); setenv("CC_STORE", cs, 1); setenv("CRUMB_REPO_ID", p->repo_id, 1);
+    } else if (p) setenv("CRUMB_COORD_ROOT", p->store, 1);
     else if (!(env && *env)) die("no repository context: run inside a git checkout or set CRUMB_COORD_ROOT");
-    else { Ident id = ident_resolve(NULL); ident_gate(&id, env, 0); }
+    else {   /* a ".." in the root is resolved here (canon_dotdot), for this process and for cc.sh alike */
+        char *rt = canon_dotdot(env), *st = env_store(rt);
+        if (strcmp(rt, env)) setenv("CRUMB_COORD_ROOT", rt, 1);
+        if (strcmp(st, rt)) { char *cs = pjoin(st, "continuations"); setenv("CC_STORE", cs, 1); }
+    }
     char self[PATH_MAX]; ssize_t n = readlink("/proc/self/exe", self, sizeof self - 1);
     if (n > 0 && !getenv("CRUMB_BIN")) { self[n] = 0; setenv("CRUMB_BIN", self, 1); }
 }
@@ -1823,7 +2450,18 @@ static int cmd_resume(const char *id) {
     return 1;
 }
 
-static long ttl_arg(const char *s, long dflt) { if (!s) return dflt; char *e; long v = strtol(s, &e, 10); if (*e || v < 0) die("bad ttl: %s", s); return v; }
+/* decimal seconds, 0..MAX_TTL, nothing else (no sign, no spaces, no overflow): the writer accepts exactly what every
+ * reader accepts (crumb924 B5; the strict reader refuses ttl_seconds above MAX_TTL, enforcement also refuses 0) */
+static long ttl_arg(const char *s, long dflt) {
+    if (!s) return dflt;
+    long v = 0;
+    for (const char *c = s; *c; c++) {
+        if (*c < '0' || *c > '9' || v > (MAX_TTL - (*c - '0')) / 10) die("bad ttl: %s (expected 0..%ld seconds)", s, MAX_TTL);
+        v = v * 10 + (*c - '0');
+    }
+    if (!*s) die("bad ttl: (empty) (expected 0..%ld seconds)", MAX_TTL);
+    return v;
+}
 /* ---------- RFC-0003: Crumb Compiler (C port of crumb-compile.sh; design decisions D1-D9 there are binding) ----------
  * compile/verify/status: hand-authored kernel stays, everything structural is generated bottom-up into
  * .crumb extensions.generated with Merkle digests. Output is byte-identical to the shell reference. */
@@ -2078,7 +2716,7 @@ static int root_on_demand(const char *top) {
 }
 static void write_crumb(const char *full, J *cr) {   /* D9: key-sorted, temp file then rename */
     jsort(cr);
-    char *out = jdump(cr), *tmp = xmalloc(strlen(full) + 32); snprintf(tmp, strlen(full) + 32, "%s.tmp.%ld", full, (long)getpid());
+    char *out = jdump(cr), *tmp = xmalloc(strlen(full) + 32); xsnprintf(tmp, strlen(full) + 32, "%s.tmp.%ld", full, (long)getpid());
     FILE *f = fcreate(tmp, 0); if (!f) die("cannot write %s", tmp);
     if (fputs(out, f) < 0 || fclose(f) != 0) die("write failed: %s", tmp);
     if (rename(tmp, full)) die("rename failed: %s", full);
@@ -2157,7 +2795,7 @@ static int compile_engine(char mode, const char *root, int quiet, int *total_out
             J *x = jget(cr, "extensions"); if (!x || x->t != JOBJ) { x = jnew(JOBJ); jset(cr, "extensions", x); }
             J *g = jclone(nw); jset(g, "generated_at_commit", jstr(head)); jset(g, "compiled_at", jstr(stamp));
             jset(x, "generated", g); jsort(cr);
-            char *out = jdump(cr), *tmp = xmalloc(strlen(full) + 32); snprintf(tmp, strlen(full) + 32, "%s.tmp.%ld", full, (long)getpid());
+            char *out = jdump(cr), *tmp = xmalloc(strlen(full) + 32); xsnprintf(tmp, strlen(full) + 32, "%s.tmp.%ld", full, (long)getpid());
             FILE *f = fcreate(tmp, 0); if (!f) die("cannot write %s", tmp);
             if (fputs(out, f) < 0 || fclose(f) != 0) die("write failed: %s", tmp);
             if (rename(tmp, full)) die("rename failed: %s", full);
@@ -2277,6 +2915,7 @@ static int cmd_context(const char *target) {
     { char **f = NULL; size_t n = 0; char *cd = pjoin(p->store, "continuations"); collect_json(cd, &f, &n);
       for (size_t i = 0; i < n; i++) {
         char *txt = read_bounded(f[i], MAX_RECORD_BYTES, NULL); J *c = txt ? jparse(txt) : NULL;
+        if (g_enforce && (!c || c->t != JOBJ)) die("%s is not valid JSON; refusing (enforcement mode never skips unreadable state)", f[i]);
         if (!c || c->t != JOBJ || !jget(c, "identity") || !cont_matches(c, rel)) continue;
         nmatch++; if (!best || strcmp(cont_when(c), cont_when(best)) > 0) { best = c; bestf = f[i]; }
       } }
@@ -2296,17 +2935,95 @@ static int cmd_context(const char *target) {
 static int cmd_store_id(const char *dir) {
     Plane *p = plane_find(dir);
     if (!p) die("store-id needs a git repository: %s", dir);
-    if (p->id.has_expect) ident_gate(&p->id, p->store, 0);
+    if (p->id.has_expect) ident_gate(&p->id, p->root, 0);
+    else if (p->layout == 2) { p->id.warned = 1; int fd = root_lock(p->root, 1); ident_gate(&p->id, p->root, 1); close(fd); }
     else { p->id.warned = 1; Txn *t = txn_begin(p, 1); txn_end(t, 0); }
     char hex[33];
-    if (!read_marker(p->store, hex)) die_x(EXIT_STORE_ID, "STORE_ID_MISSING: coordination store %s has no %s marker", p->store, STORE_ID_FILE);
+    if (!read_marker(p->root, hex)) die_x(EXIT_STORE_ID, "STORE_ID_MISSING: coordination store %s has no %s marker", p->root, STORE_ID_FILE);
     printf("%s\n", hex);
-    if (!p->id.has_expect) fprintf(stderr, "crumb: coordination store %s is unregistered; register it: git config crumb.storeId %s\n", p->store, hex);
+    if (!p->id.has_expect) fprintf(stderr, "crumb: coordination store %s is unregistered; register it: git config crumb.storeId %s\n", p->root, hex);
+    return 0;
+}
+/* store-init's proof that a layout-1 record directory (dirs/, agents/, continuations/) holds nothing, independent of
+ * enforcement mode (crumb924 B8): absent, or a real directory whose whole tree is real (empty) subdirectories only.
+ * Every open/read failure, symbolic link, record or other file refuses: an inspection that could not see everything
+ * is never taken for an empty store. With rm set (only after every directory has been proved), the empty tree is
+ * removed bottom-up and a failed removal refuses too (a file added since the proof makes the removal fail: refused).
+ * The walk is descriptor-relative (openat with O_DIRECTORY|O_NOFOLLOW from the parent's descriptor, unlinkat on the
+ * same descriptor), so no name is checked by one call and then used by another (no check-to-use window, CodeQL
+ * cpp/toctou-race-condition). pfd is the parent directory, name the entry in it, shown the path for messages. */
+static void legacy_empty(const char *root, int pfd, const char *name, const char *shown, int top, int rm) {
+    int fd = openat(pfd, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
+    if (fd < 0) {
+        int er = errno;
+        if (top && er == ENOENT) return;
+        /* Linux reports a link to a directory as ENOTDIR under O_DIRECTORY; which refusal to print is decided after the
+         * failed open (every branch here refuses, so the lookup only picks the message) */
+        struct stat st;
+        if (er == ELOOP || (er == ENOTDIR && fstatat(pfd, name, &st, AT_SYMLINK_NOFOLLOW) == 0 && S_ISLNK(st.st_mode)))
+            die("STORE_LAYOUT_V1_UNPROVEN: %s is a symbolic link; refusing to make %s a layout-2 root (records behind it cannot be proved absent): move it aside", shown, root);
+        if (er == ENOTDIR) {
+            size_t l = strlen(name);
+            if (!top && l > 5 && !strcmp(name + l - 5, ".json")) die("STORE_LAYOUT_V1_DATA: %s is a layout-1 record; refusing to make %s a layout-2 root (their locks would silently vanish): use a new empty root, or close every lease and move dirs/ agents/ continuations/ aside first", shown, root);
+            die("STORE_LAYOUT_V1_UNPROVEN: %s is not a directory; refusing to make %s a layout-2 root until it is moved aside", shown, root);
+        }
+        die("STORE_LAYOUT_V1_UNPROVEN: cannot open directory %s: %s; refusing to make %s a layout-2 root without proving the layout-1 records empty", shown, strerror(er), root);
+    }
+    DIR *d = fdopendir(fd);
+    if (!d) { int er = errno; close(fd); die("STORE_LAYOUT_V1_UNPROVEN: cannot open directory %s: %s; refusing to make %s a layout-2 root without proving the layout-1 records empty", shown, strerror(er), root); }
+    struct dirent *e;
+    for (;;) {
+        errno = 0;
+        if (!(e = readdir(d))) { if (errno) die("STORE_LAYOUT_V1_UNPROVEN: cannot read directory %s: %s; refusing to make %s a layout-2 root without proving the layout-1 records empty", shown, strerror(errno), root); break; }
+        if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
+        char *full = pjoin(shown, e->d_name);
+        legacy_empty(root, dirfd(d), e->d_name, full, 0, rm);
+        free(full);
+    }
+    closedir(d);
+    if (rm && unlinkat(pfd, name, AT_REMOVEDIR) != 0) die("STORE_LAYOUT_V1_UNPROVEN: cannot remove empty %s: %s; refusing to make %s a layout-2 root", shown, strerror(errno), root);
+}
+/* store-init [dir] (crumb924): make the coordination root a layout-2 (repository-namespaced) root, deliberately.
+ * Under the root lock: STORE_ID as store-id does (registered: must match, never created); then LAYOUT is published
+ * once (link(2), never replaced) and repos/ created. Refused unless dirs/ agents/ continuations/ are proved empty
+ * whatever the enforcement mode (legacy_empty), so old locks are never silently dropped or reinterpreted.
+ * Idempotent on a layout-2 root. */
+static int cmd_store_init(const char *dir) {
+    Plane *p = plane_find(dir);
+    if (!p) die("store-init needs a git repository: %s", dir);
+    if (p->id.has_expect) ident_gate(&p->id, p->root, 0);
+    mkdir_p(p->root);
+    int fd = root_lock(p->root, 1);
+    p->id.warned = 1; ident_gate(&p->id, p->root, 1);
+    int created = 0;
+    if (read_layout(p->root) != 2) {
+        static const char *flat[] = { "dirs", "agents", "continuations", NULL };
+        int rfd = crumb_open_follow(p->root, O_RDONLY | O_DIRECTORY, 0);   /* the root may be named through a link */
+        if (rfd < 0) die("STORE_LAYOUT_V1_UNPROVEN: cannot open coordination root %s: %s", p->root, strerror(errno));
+        for (int pass = 0; pass < 2; pass++)   /* prove all three first; only then remove the empty trees */
+            for (int i = 0; flat[i]; i++) { char *d = pjoin(p->root, flat[i]); legacy_empty(p->root, rfd, flat[i], d, 1, pass); free(d); }
+        char *ld = pjoin(p->root, "ledger");   /* never holds records; left in place when it is not empty */
+        if (unlinkat(rfd, "ledger", AT_REMOVEDIR) != 0 && errno != ENOENT && errno != ENOTEMPTY && errno != EEXIST) die("STORE_LAYOUT_V1_UNPROVEN: cannot remove empty %s: %s; refusing to make %s a layout-2 root", ld, strerror(errno), p->root);
+        free(ld); close(rfd);
+        char *lp = pjoin(p->root, LAYOUT_FILE);
+        publish_once(p->root, lp, LAYOUT_V2, strlen(LAYOUT_V2));
+        free(lp); created = 1;
+    }
+    if (read_layout(p->root) != 2) die("store-init: %s did not become layout 2", p->root);
+    char *rd = pjoin(p->root, "repos"); mkdir_p(rd); free(rd);
+    close(fd);
+    char hex[33];
+    if (!read_marker(p->root, hex)) die_x(EXIT_STORE_ID, "STORE_ID_MISSING: coordination store %s has no %s marker", p->root, STORE_ID_FILE);
+    if (!p->repo_id) p->repo_id = repo_id_resolve(p->abs, &p->repo_src);
+    printf("STORE_INIT %s layout crumb-coord-layout/2 store %s%s\n", p->root, hex, created ? "" : " (already layout 2)");
+    if (p->repo_id) printf("repository %s (from %s) -> %s/repos/%s\n", p->repo_id, p->repo_src, p->root, p->repo_id);
+    else printf("repository (none resolved: set git config crumb.repoId <owner>/<repo> before using this root)\n");
+    if (!p->id.has_expect) fprintf(stderr, "crumb: coordination store %s is unregistered; register it: git config crumb.storeId %s\n", p->root, hex);
     return 0;
 }
 
 static void usage(void) {
-    fputs("usage: crumb [--strict] <command> ...\n"
+    fputs("usage: crumb [--strict] [--enforce] <command> ...\n"
           "  seed <root> [-n] [-v]                       write/refresh .crumb files (idempotent; -n dry run)\n"
           "  backfill <root> [--since <date>] [-n]       reconstruct history from git + lane reports (run after seed)\n"
           "  create <dir> <name> <purpose> [layer]       new .crumb for one directory\n"
@@ -2328,13 +3045,20 @@ static void usage(void) {
           "  list [path]                                 live scents, locks, whispers under path\n"
           "  validate [path]                             check .crumb files against RFC-0001 required fields\n"
           "  store-id [dir]                              print the coordination store id (creates it if unregistered and absent)\n"
+          "  store-init [dir]                            make the coordination root layout 2 (repos/<repo-id>/ namespaces), deliberately\n"
+          "  check <agent> <dir> <target> [--generation N] [--key K]  read-only: exit 0 only if agent holds a valid lease on target or an ancestor\n"
           "store identity: expected id from CRUMB_EXPECT_STORE_ID, else git config crumb.storeId; --strict or\n"
-          "  CRUMB_STRICT_STORE_ID=1 refuses unregistered stores. Exit 3 = store identity refusal, 4 = refused store file.\n", stderr);
+          "  CRUMB_STRICT_STORE_ID=1 refuses unregistered stores. Exit 3 = store identity refusal, 4 = refused store file.\n"
+          "repository id (layout 2): CRUMB_REPO_ID, else git config crumb.repoId, else origin URL <owner>/<repo>.\n"
+          "enforcement (--enforce, CRUMB_ENFORCE=1, git config crumb.enforce true): registered store, layout 2, repo id,\n"
+          "  verbatim agent ids, strict lease schema, no .crumb.local fallback, unreadable state is an error (exit 1).\n", stderr);
     exit(1);
 }
+static unsigned long long gen_arg(const char *s) { unsigned long long g; if (!u64_str(s, &g)) die("bad generation: %s (expected a decimal integer)", s); return g; }
 int main(int argc, char **argv) {
     { const char *s = getenv("CRUMB_STRICT_STORE_ID"); if (s && !strcmp(s, "1")) g_strict = 1; }
-    while (argc > 1 && !strcmp(argv[1], "--strict")) { g_strict = 1; argv++; argc--; }
+    { const char *s = getenv("CRUMB_ENFORCE"); if (s && bool_word(s, "CRUMB_ENFORCE")) enforce_on(); }
+    while (argc > 1 && (!strcmp(argv[1], "--strict") || !strcmp(argv[1], "--enforce"))) { if (!strcmp(argv[1], "--enforce")) enforce_on(); else g_strict = 1; argv++; argc--; }
     if (argc < 2) usage();
     const char *c = argv[1]; int a = argc - 2; char **v = argv + 2;
     if (!strcmp(c, "seed") && a >= 1) {
@@ -2365,6 +3089,16 @@ int main(int argc, char **argv) {
     if (!strcmp(c, "checkpoint")) return cmd_checkpoint(a, v);
     if (!strcmp(c, "resume") && a == 1) return cmd_resume(v[0]);
     if (!strcmp(c, "store-id") && a <= 1) return cmd_store_id(a ? v[0] : ".");
+    if (!strcmp(c, "store-init") && a <= 1) return cmd_store_init(a ? v[0] : ".");
+    if (!strcmp(c, "check") && a >= 3 && (a - 3) % 2 == 0 && a <= 7) {
+        int has_want = 0; unsigned long long want = 0; const char *want_key = NULL;
+        for (int i = 3; i < a; i += 2) {
+            if (!strcmp(v[i], "--generation") && !has_want) { has_want = 1; want = gen_arg(v[i + 1]); }
+            else if (!strcmp(v[i], "--key") && !want_key && *v[i + 1]) want_key = v[i + 1];
+            else usage();
+        }
+        return cmd_check(v[0], v[1], v[2], has_want, want, want_key);
+    }
     if (!strcmp(c, "list") || !strcmp(c, "validate")) {
         int val = !strcmp(c, "validate"); Tot t = {0, 0, 0};
         char *r = absdir(a ? v[0] : ".");

@@ -9,6 +9,7 @@ test: crumb
 	sh test.sh ./crumb
 	sh test-continuation.sh ./crumb
 	sh test-hostile.sh ./crumb
+	sh test-namespace.sh ./crumb
 
 clean:
 	rm -f crumb
