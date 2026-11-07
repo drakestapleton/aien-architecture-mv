@@ -33,6 +33,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -40,6 +41,7 @@
 #define HISTORY_CAP 20
 #define SCENT_TTL 3600
 #define LOCK_TTL 1800
+#define MAX_TTL 315360000L   /* 3650 days: the largest ttl any command writes and the strict reader accepts (crumb924 B5) */
 #define WHISPER_RETENTION (24 * 3600)
 
 static void die(const char *fmt, ...) {
@@ -441,7 +443,9 @@ static unsigned long long gen_next(J *rec, const char *path, const char *key, co
     const char *h = cur ? jstrval(cur, "holder") : NULL;
     unsigned long long g = cur && cg && h && !strcmp(h, agent) ? cg : last + 1;
     if (!g) die("generation counter for %s is exhausted", key);
-    jset(gens, key, jnum_u64(g));
+    /* the high-water mark never decreases: a renewal keeps the lease's generation but never lowers a larger
+     * counter (crumb924 B6; enforcement mode refuses such a pair before this point, dir_record_strict) */
+    jset(gens, key, jnum_u64(g > last ? g : last));
     return g;
 }
 
@@ -803,7 +807,7 @@ static void agent_require(const Plane *p, const char *agent) {   /* p NULL: befo
  * (dirs, agents, continuations, ledger), or namespace X/dirs would nest inside namespace X. */
 static int repo_id_ok(const char *s) {
     size_t n = strlen(s);
-    if (n < 1 || n > 200) return 0;
+    if (n < 1 || n > 200 || !alnum_c(s[0])) return 0;   /* a leading '/' (empty first component) would alias "x" (N2) */
     const char *sl = strchr(s, '/');
     if (sl && strchr(sl + 1, '/')) return 0;
     for (const char *c = s; *c; c++) {
@@ -880,6 +884,27 @@ static int bool_word(const char *v, const char *what) {   /* git-style boolean; 
     return 0;
 }
 static void enforce_on(void) { g_enforce = 1; g_strict = 1; }
+/* git config crumb.enforce, read with git's own boolean conversion (`git config --bool --get`: a valueless key, yes,
+ * on, 1, any non-zero integer are true). 1 true, 0 false, -1 absent (git exit 1); any other outcome (a value git
+ * refuses as a boolean, git failing to run) is an error, never "absent" (crumb924 N1). */
+static int git_config_bool(const char *dir, const char *key) {
+    Buf q = {0}; bstr(&q, "'");
+    for (const char *p = dir; *p; p++) { if (*p == '\'') bstr(&q, "'\\''"); else bput(&q, p, 1); }
+    bstr(&q, "'");
+    size_t cn = q.n + strlen(key) + 64; char *cmd = xmalloc(cn);
+    snprintf(cmd, cn, "git -C %s config --bool --get %s 2>/dev/null", q.p, key);
+    FILE *f = popen(cmd, "r");
+    if (!f) die("cannot run git to read git config %s: %s", key, strerror(errno));
+    char t[64]; size_t n = fread(t, 1, sizeof t - 1, f); t[n] = 0;
+    int st = pclose(f), rc = st != -1 && WIFEXITED(st) ? WEXITSTATUS(st) : -1;
+    free(cmd); free(q.p);
+    while (n && (t[n - 1] == '\n' || t[n - 1] == '\r')) t[--n] = 0;
+    if (rc == 1 && !n) return -1;
+    if (rc == 0 && !strcmp(t, "true")) return 1;
+    if (rc == 0 && !strcmp(t, "false")) return 0;
+    die("cannot read git config %s as a boolean (git exit %d%s%s); refusing to guess whether enforcement is on", key, rc, n ? ", output " : "", t);
+    return 0;
+}
 static char *ns_path(const char *root, const char *repo_id) { char *r = pjoin(root, "repos"), *s = pjoin(r, repo_id); free(r); return s; }
 
 static Plane *plane_find(const char *dir) {   /* resolve the coordination root; no identity check yet */
@@ -894,7 +919,7 @@ static Plane *plane_find(const char *dir) {   /* resolve the coordination root; 
         if (g_enforce) die("ENFORCE_NO_REPOSITORY: %s is not inside its git top-level %s; enforcement mode has no .crumb.local fallback", abs, top);
         return NULL;
     }
-    if (!g_enforce) { char *ev = run_git(abs, "config --get crumb.enforce"); if (*ev && bool_word(ev, "git config crumb.enforce")) enforce_on(); }
+    if (!g_enforce && git_config_bool(abs, "crumb.enforce") == 1) enforce_on();
     Plane *p = xmalloc(sizeof *p); memset(p, 0, sizeof *p);
     p->abs = abs; p->top = top; p->rel = abs[tl] ? xstrdup(abs + tl + 1) : xstrdup(".");
     const char *env = getenv("CRUMB_COORD_ROOT");
@@ -1015,21 +1040,32 @@ static int root_lock(const char *root, int create) {
     free(lp);
     return fd;
 }
+/* A root that any command has initialized or written: layout 2 (store-init creates .lock with LAYOUT), enforcement,
+ * or a layout-1 root holding a marker or record directories (every first mutation creates .lock before them). Only a
+ * never-used compatibility root may lack .lock; for crumb check that is plain absence (crumb924 B4). */
+static int store_used(const Plane *p) {
+    if (p->layout == 2 || g_enforce) return 1;
+    static const char *names[] = { STORE_ID_FILE, LAYOUT_FILE, "dirs", "agents", NULL };
+    for (int i = 0; names[i]; i++) { char *f = pjoin(p->root, names[i]); struct stat st; int e = lstat(f, &st) == 0; free(f); if (e) return 1; }
+    return 0;
+}
 static Txn *txn_begin(Plane *p, int mutate) {
     Txn *t = xmalloc(sizeof *t); memset(t, 0, sizeof *t); t->p = p; t->fd = -1;
     if (!mutate) return t;
+    mkdir_p(p->root);
+    t->fd = root_lock(p->root, 1);   /* the lock exists before any record directory (crumb check relies on it, B4) */
     static const char *sub[] = { "dirs", "agents", "continuations", "ledger", NULL };
     for (int i = 0; sub[i]; i++) { char *d = pjoin(p->store, sub[i]); mkdir_p(d); free(d); }
-    t->fd = root_lock(p->root, 1);
     ident_gate(&p->id, p->root, 1);   /* under the lock: re-check the registered id, or create the marker once */
     if (read_layout(p->root) != p->layout) die("STORE_LAYOUT_CHANGED: coordination root %s changed layout while this command ran (store-init); retry", p->root);
     return t;
 }
 /* Strict lease schema (enforcement mode always; crumb check for the leases it judges): holder a non-empty string,
- * acquired_at YYYY-MM-DDTHH:MM:SSZ, ttl_seconds a positive integer, generation an integer >= 1. Lenient (check
+ * session a non-empty string, acquired_at YYYY-MM-DDTHH:MM:SSZ, ttl_seconds an integer in 1..MAX_TTL (what claim
+ * accepts), generation an integer >= 1. Lenient (check
  * outside enforcement mode, layout-1 stores written by older tools): a parseable acquired_at, ttl_seconds >= 0 (default
  * LOCK_TTL when absent, as the sweep does), generation optional (0 when absent). Returns NULL or what is wrong. */
-typedef struct { const char *holder; long acq, ttl; unsigned long long gen; } Lease;
+typedef struct { const char *holder, *session; long acq, ttl; unsigned long long gen; } Lease;
 static const char *lease_parse(const J *e, int strict, Lease *l) {
     memset(l, 0, sizeof *l);
     if (!e || e->t != JOBJ) return "is not an object";
@@ -1038,10 +1074,11 @@ static const char *lease_parse(const J *e, int strict, Lease *l) {
     J *a = jget(e, "acquired_at");
     if (!a || a->t != JSTR || !(strict ? iso_strict(a->s, &l->acq) : (l->acq = parse_iso(a->s)) >= 0)) return "acquired_at is not a YYYY-MM-DDTHH:MM:SSZ timestamp";
     J *t = jget(e, "ttl_seconds"); unsigned long long v = LOCK_TTL;
-    if (t || strict) { if (!t || t->t != JNUM || !u64_str(t->s, &v) || v > (unsigned long long)LONG_MAX / 4 || (strict && !v)) return "ttl_seconds is not a positive integer"; }
+    if (t || strict) { if (!t || t->t != JNUM || !u64_str(t->s, &v) || v > (strict ? (unsigned long long)MAX_TTL : (unsigned long long)LONG_MAX / 4) || (strict && !v)) return strict ? "ttl_seconds is not an integer in 1..315360000" : "ttl_seconds is not a positive integer"; }
     l->ttl = (long)v;
     J *g = jget(e, "generation");
     if (g ? g->t != JNUM || !u64_str(g->s, &l->gen) || (strict && !l->gen) : strict) return "generation is not an integer >= 1";
+    if (strict) { J *s = jget(e, "session"); if (!s || s->t != JSTR || !*s->s) return "session is not a non-empty string"; l->session = s->s; }
     return NULL;
 }
 static void malformed(const char *path, const char *key, const char *why) {
@@ -1058,9 +1095,20 @@ static void dir_record_strict(const char *path, const J *j, const char *label) {
         if (why) malformed(path, lk->k[i], why);
         char *nk = norm_path(lk->k[i]), *kd = nk ? key_dir(nk) : NULL;
         if (!nk || strcmp(nk, lk->k[i]) || strcmp(kd, label)) malformed(path, lk->k[i], "is not a normalised key of this directory record");
-        if (jgen(gens, lk->k[i]) < l.gen) malformed(path, lk->k[i], "has a generation above the record's generations counter");
+        if (jgen(gens, lk->k[i]) != l.gen) malformed(path, lk->k[i], "has a generation that differs from the record's generations counter (the tool keeps them equal; a renewal would lower the high-water mark or reuse a token)");
         free(nk); free(kd);
     }
+}
+/* enforcement mode: an existing agent record must be what agent_set writes, or session ownership cannot be judged
+ * (crumb924 B3: a malformed session is an error, never "no session") */
+static void agent_record_strict(const char *path, const J *j) {
+    const char *why = NULL; J *s = jget(j, "session"), *u = jget(j, "updated_at"), *t = jget(j, "ttl_seconds"), *a = jget(j, "agent");
+    long acq; unsigned long long v;
+    if (!a || a->t != JSTR || !*a->s) why = "agent is not a non-empty string";
+    else if (!s || s->t != JSTR || !*s->s) why = "session is not a non-empty string";
+    else if (!u || u->t != JSTR || !iso_strict(u->s, &acq)) why = "updated_at is not a YYYY-MM-DDTHH:MM:SSZ timestamp";
+    else if (!t || t->t != JNUM || !u64_str(t->s, &v) || !v || v > (unsigned long long)MAX_TTL) why = "ttl_seconds is not an integer in 1..315360000";
+    if (why) die("MALFORMED_RECORD: %s: agent record: %s; refusing (enforcement mode never treats malformed session metadata as absent: fix or move it aside)", path, why);
 }
 static Rec *rec_load(Txn *t, const char *path, int agent, const char *label) {
     for (size_t i = 0; i < t->n; i++) if (!strcmp(t->r[i]->path, path)) return t->r[i];
@@ -1074,6 +1122,7 @@ static Rec *rec_load(Txn *t, const char *path, int agent, const char *label) {
     r->existed = txt != NULL;
     if (!j) j = jnew(JOBJ);
     if (!agent && g_enforce) dir_record_strict(path, j, label);
+    if (agent && g_enforce && r->existed) agent_record_strict(path, j);
     if (!agent) {
         if (!jget(j, "schema_version")) jset(j, "schema_version", jstr(SCHEMA));
         if (!jget(j, "directory")) jset(j, "directory", jstr(label));
@@ -1085,10 +1134,22 @@ static Rec *rec_load(Txn *t, const char *path, int agent, const char *label) {
     } else sweep(j);
     return r;
 }
+/* Directory record path. "." is dirs/_root.json in both layouts. Layout 2 (crumb924 B2): a first component that
+ * starts with '_' gets one more '_' (`_root/x` -> dirs/__root/x.json, `_root` -> dirs/__root.json), so no repository
+ * directory can map onto dirs/_root.json or dirs/_root/ and every record name maps back to exactly one key directory
+ * (dir_label). Layout 1 keeps its historical mapping (where `_root` shares the root record) byte for byte. */
 static char *dir_path(const Plane *p, const char *rel) {
     if (!strcmp(rel, ".")) return pjoin(p->store, "dirs/_root.json");
-    char *a = pjoin(p->store, "dirs"), *b = pjoin(a, rel), *c = xmalloc(strlen(b) + 6);
-    sprintf(c, "%s.json", b); return c;
+    char *a = pjoin(p->store, "dirs"), *b = p->layout == 2 && rel[0] == '_' ? xmalloc(strlen(a) + strlen(rel) + 3) : pjoin(a, rel), *c;
+    if (p->layout == 2 && rel[0] == '_') sprintf(b, "%s/_%s", a, rel);
+    c = xmalloc(strlen(b) + 6);
+    sprintf(c, "%s.json", b); free(a); free(b); return c;
+}
+/* the key directory a record name under dirs/ (without .json) stands for; NULL when no key maps to that name */
+static char *dir_label(const Plane *p, const char *name) {
+    if (!strcmp(name, "_root")) return xstrdup(".");
+    if (p->layout != 2 || name[0] != '_') return xstrdup(name);
+    return name[1] == '_' ? xstrdup(name + 1) : NULL;
 }
 static Rec *dir_rec(Txn *t, const char *rel) { return rec_load(t, dir_path(t->p, rel), 0, rel); }
 static char *agent_path(const Plane *p, const char *agent) {
@@ -1118,6 +1179,11 @@ static void collect_json_at(const char *dir, char ***out, size_t *n, int top) {
         char *full = pjoin(dir, e->d_name); struct stat st;
         int ls = lstat(full, &st);
         if (ls != 0 && g_enforce) walk_fail("stat", full);
+        if (ls == 0 && S_ISLNK(st.st_mode)) {   /* never followed; in enforcement mode never skipped either (crumb924 B1) */
+            if (g_enforce) refuse(full, "is a symbolic link inside the coordination records (never followed; enforcement mode refuses to skip the records it may hide)");
+            size_t l = strlen(e->d_name);
+            if (!(l > 5 && !strcmp(e->d_name + l - 5, ".json"))) { fprintf(stderr, "crumb: warning: %s is a symbolic link; it is not walked and records under it are ignored (enforcement mode refuses this)\n", full); free(full); continue; }
+        }
         if (ls == 0 && S_ISDIR(st.st_mode)) collect_json_at(full, out, n, 0);
         else { size_t l = strlen(e->d_name); if (l > 5 && !strcmp(e->d_name + l - 5, ".json")) { *out = xrealloc(*out, (*n + 1) * sizeof **out); (*out)[(*n)++] = full; continue; } }
         free(full);
@@ -1132,7 +1198,14 @@ static void txn_prune(Txn *t) {   /* load every record: expired entries drop out
     size_t pl = strlen(dd) + 1;
     for (size_t i = 0; i < n; i++) {
         char *rel = xstrdup(f[i] + pl); rel[strlen(rel) - 5] = 0;
-        rec_load(t, f[i], 0, !strcmp(rel, "_root") ? "." : rel);
+        char *label = dir_label(t->p, rel);
+        if (!label) {   /* layout 2: a '_' name no key maps to (an older layout-2 build wrote it, or it was planted) */
+            if (g_enforce) die("MALFORMED_RECORD: %s is not a directory record name of layout 2 (a first component starting with '_' is stored as '__'; dirs/_root.json is only the repository root); refusing (fix or move it aside)", f[i]);
+            fprintf(stderr, "crumb: warning: %s is not a directory record name of layout 2; it is ignored (enforcement mode refuses this)\n", f[i]);
+            free(rel); continue;
+        }
+        rec_load(t, f[i], 0, label);
+        free(rel);
     }
     char **g = NULL; size_t m = 0;
     collect_json(ad, &g, &m);
@@ -1215,17 +1288,33 @@ static int key_covers(const char *anc, const char *k) {
     size_t n = strlen(anc);
     return !strncmp(k, anc, n) && k[n] == '/';
 }
-/* enforcement mode: an agent id names exactly one live session; a second session presenting it is refused (exit 2) */
+/* enforcement mode: an agent id names exactly one live session; a second session presenting it is refused (exit 2).
+ * Live means a live heartbeat from another session, or a live lease of this id recorded by another session: the
+ * heartbeat can expire long before the lease, and the lease's session decides who may renew or close it (crumb924 B3).
+ * Every dir record is loaded and swept (txn_prune) before this runs, so the leases left are the live ones. */
 static int agent_in_use(Txn *t, const char *agent) {
     if (!g_enforce) return 0;
     Rec *r = agent_rec(t, agent);
     const char *s = jstrval(r->root, "session");
-    if (!r->existed || r->dead || !s) return 0;
     char *me = session_id(agent);
-    if (!strcmp(s, me)) { free(me); return 0; }
-    printf("BLOCKED agent %s is live in session %s, not this session %s (an agent id names one session: use <agent-name>.<session-id>)\n", agent, s, me);
+    if (r->existed && !r->dead && s && strcmp(s, me)) {
+        printf("BLOCKED agent %s is live in session %s, not this session %s (an agent id names one session: use <agent-name>.<session-id>)\n", agent, s, me);
+        free(me); return 1;
+    }
+    for (size_t i = 0; i < t->n; i++) if (!t->r[i]->agent) {
+        J *lk = jget(t->r[i]->root, "locks");
+        if (lk && lk->t == JOBJ) for (size_t k = 0; k < lk->n; k++) {
+            const char *h = jstrval(lk->v[k], "holder"), *ls = jstrval(lk->v[k], "session");
+            if (!h || strcmp(h, agent)) continue;
+            if (!ls) die("MALFORMED_LEASE: %s: lease \"%s\" has no session; refusing", t->r[i]->path, lk->k[k]);   /* dir_record_strict already refused it */
+            if (strcmp(ls, me)) {
+                printf("BLOCKED agent %s is live in session %s, not this session %s (live lease on %s generation %s; an agent id names one session: use <agent-name>.<session-id>)\n", agent, ls, me, lk->k[k], jget(lk->v[k], "generation") ? jget(lk->v[k], "generation")->s : "?");
+                free(me); return 1;
+            }
+        }
+    }
     free(me);
-    return 1;
+    return 0;
 }
 static int cmd_claim(const char *agent, const char *dir, const char *target, const char *intent, long ttl) {
     Plane *p = plane_resolve(dir);
@@ -1273,6 +1362,7 @@ static int cmd_update(const char *agent, const char *dir, const char *focus, lon
     Plane *p = plane_resolve(dir);
     if (!p) return legacy_update(agent, dir, focus, ttl);
     agent_require(p, agent);
+    if (g_enforce && ttl <= 0) die("enforcement mode needs a positive ttl (got %ld)", ttl);   /* the strict agent record reader refuses ttl 0 */
     Txn *t = txn_begin(p, 1); txn_prune(t); import_legacy(t);
     if (agent_in_use(t, agent)) { txn_end(t, 0); return 2; }
     agent_set(t, agent, focus, ttl);
@@ -1331,6 +1421,8 @@ static int cmd_check(const char *agent, const char *dir, const char *target, int
     agent_require(p, agent);
     char *key = target_key(p, target, p->rel);
     int fd = root_lock(p->root, 0);
+    if (fd < 0 && store_used(p))   /* crumb924 B4: an initialized store without its lock is broken, not empty */
+        die("STORE_LOCK_MISSING: coordination root %s is in use (layout %d%s) but has no .lock; refusing to report a lease without a consistent read (check never creates the lock)", p->root, p->layout, g_enforce ? ", enforcement mode" : "");
     ident_gate(&p->id, p->root, 0);   /* again under the lock: the root may have been swapped meanwhile */
     if (read_layout(p->root) != p->layout) die("STORE_LAYOUT_CHANGED: coordination root %s changed layout while this command ran (store-init); retry", p->root);
     long now = now_epoch();
@@ -2217,7 +2309,18 @@ static int cmd_resume(const char *id) {
     return 1;
 }
 
-static long ttl_arg(const char *s, long dflt) { if (!s) return dflt; char *e; long v = strtol(s, &e, 10); if (*e || v < 0) die("bad ttl: %s", s); return v; }
+/* decimal seconds, 0..MAX_TTL, nothing else (no sign, no spaces, no overflow): the writer accepts exactly what every
+ * reader accepts (crumb924 B5; the strict reader refuses ttl_seconds above MAX_TTL, enforcement also refuses 0) */
+static long ttl_arg(const char *s, long dflt) {
+    if (!s) return dflt;
+    long v = 0;
+    for (const char *c = s; *c; c++) {
+        if (*c < '0' || *c > '9' || v > (MAX_TTL - (*c - '0')) / 10) die("bad ttl: %s (expected 0..%ld seconds)", s, MAX_TTL);
+        v = v * 10 + (*c - '0');
+    }
+    if (!*s) die("bad ttl: (empty) (expected 0..%ld seconds)", MAX_TTL);
+    return v;
+}
 /* ---------- RFC-0003: Crumb Compiler (C port of crumb-compile.sh; design decisions D1-D9 there are binding) ----------
  * compile/verify/status: hand-authored kernel stays, everything structural is generated bottom-up into
  * .crumb extensions.generated with Merkle digests. Output is byte-identical to the shell reference. */

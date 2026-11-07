@@ -294,5 +294,157 @@ r "$K" env CRUMB_TEST_NOW=$((NOW + 220)) CRUMB_SESSION="$HI" "$C" claim "$HI" . 
 r2=$RC; r "$K" env CRUMB_TEST_NOW=$((NOW + 221)) "$C" check "$HI" . docs/h.md
 [ $r2 -eq 0 ] && [ $RC -eq 0 ] && has "^HELD docs/h.md by $HI key docs/h.md generation 1 " && ok "N19 Hermes session identity with '_' claims and checks verbatim in enforcement mode" || { why; bad "N19 underscore identity"; }
 
+# ---- N20 (review B1) a symlinked directory inside the record tree: refused in enforcement mode, never skipped, never followed ----
+SL="$T/symdesc"; mkrepo "$SL" https://github.com/acme/symdesc.git; enroll "$SL" "$ROOT"; NS="$ROOT/repos/acme/symdesc"
+r "$SL" "$C" claim alice . src/deep/a.c deep 600
+mv "$NS/dirs/src" "$T/hidden-src"; ln -s "$T/hidden-src" "$NS/dirs/src"; h0=$(sum "$T/hidden-src"); s0=$(sum "$NS")
+r "$SL" "$C" claim bob . src ancestor 600
+[ $RC -eq 4 ] && herr 'REFUSED_RECORD: .*/dirs/src is a symbolic link' && [ "$(sum "$NS")" = "$s0" ] && ok "N20 ancestor claim over a symlinked descendant record directory: exit 4, not granted, store unchanged" || { why; bad "N20 symlinked descendant record directory skipped"; }
+r "$SL" "$C" claim bob . . whole 600; c1=$RC; r "$SL" "$C" claim bob . other.c unrelated 600; c2=$RC
+[ $c1 -eq 4 ] && [ $c2 -eq 4 ] && [ "$(sum "$NS")" = "$s0" ] && ok "N20 claims of . and of an unrelated key exit 4 too (the record walk never skips)" || bad "N20 other claims over the link ($c1 $c2)"
+r "$SL" "$C" check bob . src
+[ $RC -eq 2 ] && has '^REFUSED absent src ' && ok "N20 check bob src: REFUSED absent (no ancestor lease was granted)" || { why; bad "N20 check after the refused claim"; }
+[ "$(sum "$T/hidden-src")" = "$h0" ] && [ -L "$NS/dirs/src" ] && ok "N20 the link is never followed: link and target left as found" || bad "N20 link followed or changed"
+git -C "$SL" config crumb.enforce false
+r "$SL" "$C" sniff alice .
+[ $RC -eq 0 ] && herr 'warning: .*/dirs/src is a symbolic link; it is not walked' && ok "N20 outside enforcement the unwalked link is a stderr warning, never silent" || { why; bad "N20 normal-mode warning"; }
+git -C "$SL" config crumb.enforce true; rm -f "$NS/dirs/src"; mv "$T/hidden-src" "$NS/dirs/src"
+
+# ---- N21 (review B2) a top-level directory named _root never shares the repository root's record (layout 2) ----
+RT="$T/rootname"; mkrepo "$RT" https://github.com/acme/rootname.git; enroll "$RT" "$ROOT"; NS="$ROOT/repos/acme/rootname"
+r "$RT" env CRUMB_TEST_NOW=$NOW "$C" claim alice . _root/a.c under 600; a1=$RC; ga=$(gen)
+r "$RT" env CRUMB_TEST_NOW=$NOW "$C" claim alice . README.md top 600; a2=$RC; gr=$(gen)
+[ $a1 -eq 0 ] && [ $a2 -eq 0 ] && [ "$ga" = 1 ] && [ "$gr" = 1 ] && grep -q '"_root/a.c"' "$NS/dirs/__root.json" 2>/dev/null && ! grep -q '"_root/a.c"' "$NS/dirs/_root.json" && grep -q '"README.md"' "$NS/dirs/_root.json" && ok "N21 _root/a.c lives in dirs/__root.json, root-level README.md in dirs/_root.json (generation 1 each)" || { why; bad "N21 _root mapping"; }
+r "$RT" env CRUMB_TEST_NOW=$((NOW + 1)) "$C" check alice . _root/a.c; c1=$RC; o1=$OUT
+r "$RT" env CRUMB_TEST_NOW=$((NOW + 1)) "$C" check alice . README.md
+[ $c1 -eq 0 ] && [ $RC -eq 0 ] && printf '%s\n' "$o1" | grep -q '^HELD _root/a.c by alice key _root/a.c generation 1 ' && has '^HELD README.md by alice key README.md generation 1 ' && ok "N21 check: _root/a.c and README.md both HELD" || { why; bad "N21 check"; }
+r "$RT" env CRUMB_TEST_NOW=$((NOW + 2)) "$C" claim alice . _root/a.c renew 600; c1=$RC; g1=$(gen)
+r "$RT" env CRUMB_TEST_NOW=$((NOW + 2)) "$C" claim alice . README.md renew 600; g2=$(gen)
+[ $c1 -eq 0 ] && [ $RC -eq 0 ] && [ "$g1" = 1 ] && [ "$g2" = 1 ] && ok "N21 renewals of _root/a.c and README.md keep generation 1" || { why; bad "N21 renew ($g1 $g2)"; }
+r "$RT" env CRUMB_TEST_NOW=$((NOW + 3)) "$C" claim bob . src/b.c unrelated 600; c1=$RC
+r "$RT" env CRUMB_TEST_NOW=$((NOW + 3)) "$C" claim bob . other.c root-level 600
+[ $c1 -eq 0 ] && [ $RC -eq 0 ] && ok "N21 unrelated claims (src/b.c, root-level other.c) still work" || { why; bad "N21 unrelated claims"; }
+r "$RT" env CRUMB_TEST_NOW=$((NOW + 4)) "$C" claim bob . _root dir 600; c1=$RC; o1=$OUT
+r "$RT" env CRUMB_TEST_NOW=$((NOW + 4)) "$C" check bob . _root/a.c
+[ $c1 -eq 2 ] && printf '%s\n' "$o1" | grep -q 'overlapping lease on _root/a.c\]' && [ $RC -eq 2 ] && has '^REFUSED held-by alice _root/a.c key _root/a.c ' && ok "N21 bob: claim of _root BLOCKED by the descendant, check REFUSED held-by alice" || { why; bad "N21 overlap on _root"; }
+r "$RT" env CRUMB_TEST_NOW=$((NOW + 5)) "$C" close alice . _root/a.c; c1=$RC
+r "$RT" env CRUMB_TEST_NOW=$((NOW + 5)) "$C" close alice . README.md; c2=$RC
+r "$RT" env CRUMB_TEST_NOW=$((NOW + 6)) "$C" claim bob . _root/a.c next 600
+[ $c1 -eq 0 ] && [ $c2 -eq 0 ] && [ $RC -eq 0 ] && has 'generation 2$' && ok "N21 close of both, then bob takes _root/a.c at generation 2" || { why; bad "N21 close and re-acquire ($c1 $c2)"; }
+r "$RT" env CRUMB_TEST_NOW=$((NOW + 7)) "$C" check bob . _root/a.c --key _root/a.c --generation 2
+[ $RC -eq 0 ] && ok "N21 check of the new token (--key _root/a.c --generation 2): HELD" || { why; bad "N21 new token"; }
+echo '{}' > "$NS/dirs/_old.json"; s0=$(sum "$NS")
+r "$RT" "$C" claim carol . src/a.c x 600
+[ $RC -eq 1 ] && herr 'MALFORMED_RECORD: .*dirs/_old.json is not a directory record name of layout 2' && [ "$(sum "$NS")" = "$s0" ] && ok "N21 a '_' record name no key maps to (old layout-2 mapping): enforcement exit 1, store unchanged" || { why; bad "N21 unmapped name"; }
+rm -f "$NS/dirs/_old.json"; mkdir -p "$NS/dirs/_root"; echo '{}' > "$NS/dirs/_root/x.json"
+r "$RT" "$C" claim carol . src/a.c x 600
+[ $RC -eq 1 ] && herr 'dirs/_root/x.json is not a directory record name' && ok "N21 a dirs/_root/ subtree is never a key directory: exit 1" || { why; bad "N21 dirs/_root subtree"; }
+rm -rf "$NS/dirs/_root"
+L1="$T/rootname1"; mkrepo "$L1" -
+r "$L1" "$C" claim alice . _root/a.c v1 600
+[ $RC -eq 0 ] && grep -q '"_root/a.c"' "$L1/.git/crumb/v1/dirs/_root.json" && [ ! -e "$L1/.git/crumb/v1/dirs/__root.json" ] && ok "N21 control: layout 1 keeps its historical mapping (dirs/_root.json) byte for byte" || { why; bad "N21 layout 1 mapping changed"; }
+
+# ---- N22 (review B3) a lease belongs to the session that took it: heartbeat expiry and malformed metadata never hand it over ----
+SE="$T/sess"; mkrepo "$SE" https://github.com/acme/sess.git; enroll "$SE" "$ROOT"; NS="$ROOT/repos/acme/sess"
+r "$SE" env CRUMB_TEST_NOW=$NOW CRUMB_SESSION=first "$C" claim worker . other.c long 600
+r "$SE" env CRUMB_TEST_NOW=$NOW CRUMB_SESSION=first "$C" update worker . heartbeat 1; s0=$(sum "$NS")
+r "$SE" env CRUMB_TEST_NOW=$((NOW + 2)) CRUMB_SESSION=second "$C" claim worker . other.c takeover 600
+[ $RC -eq 2 ] && has '^BLOCKED agent worker is live in session first, not this session second \(live lease on other.c generation 1' && ok "N22 heartbeat expired, lease live: another session of the same id cannot renew it (exit 2)" || { why; bad "N22 session takeover after heartbeat expiry"; }
+r "$SE" env CRUMB_TEST_NOW=$((NOW + 2)) CRUMB_SESSION=second "$C" close worker . other.c; c1=$RC
+r "$SE" env CRUMB_TEST_NOW=$((NOW + 2)) CRUMB_SESSION=second "$C" update worker . mine 600; c2=$RC
+r "$SE" env CRUMB_TEST_NOW=$((NOW + 2)) CRUMB_SESSION=second "$C" claim worker . src/new.c new 600; c3=$RC
+[ $c1 -eq 2 ] && [ $c2 -eq 2 ] && [ $c3 -eq 2 ] && [ "$(sum "$NS")" = "$s0" ] && ok "N22 the other session's close, update and new claim: exit 2 each, store unchanged" || bad "N22 other session ($c1 $c2 $c3)"
+r "$SE" env CRUMB_TEST_NOW=$((NOW + 3)) CRUMB_SESSION=first "$C" claim worker . other.c renew 600
+[ $RC -eq 0 ] && has 'generation 1$' && ok "N22 the owning session renews its lease after its heartbeat expired (generation 1)" || { why; bad "N22 owner renew"; }
+AR="$NS/agents/worker.json"; cp "$AR" "$T/agent-pristine.json"; n=0; tot=0
+for f in '.session=42' 'del(.session)' '.session=""' '.updated_at="yesterday"' '.ttl_seconds=0' '.ttl_seconds="600"'; do
+  tot=$((tot + 1)); jq "$f" "$T/agent-pristine.json" > "$AR"; s0=$(sum "$NS")
+  r "$SE" env CRUMB_TEST_NOW=$((NOW + 4)) CRUMB_SESSION=second "$C" claim worker . other.c takeover 600; c1=$RC; e1=$ERR
+  r "$SE" env CRUMB_TEST_NOW=$((NOW + 4)) CRUMB_SESSION=first "$C" claim worker . other.c renew 600; c2=$RC
+  if [ $c1 -eq 1 ] && [ $c2 -eq 1 ] && printf '%s' "$e1" | grep -q 'MALFORMED_RECORD: .*agents/worker.json: agent record' && [ "$(sum "$NS")" = "$s0" ]; then n=$((n + 1)); else echo "    malformed agent $f: second=$c1 first=$c2 $e1"; fi
+done
+[ $n -eq $tot ] && ok "N22 $tot malformed agent-record variants (session 42/absent/empty, updated_at, ttl): exit 1 for every session, store unchanged" || bad "N22 malformed agent metadata ($n of $tot)"
+cp "$T/agent-pristine.json" "$AR"; LR="$NS/dirs/_root.json"; cp "$LR" "$T/lease-pristine.json"
+jq 'del(.locks["other.c"].session)' "$T/lease-pristine.json" > "$LR"
+r "$SE" env CRUMB_TEST_NOW=$((NOW + 4)) "$C" check worker . other.c; c1=$RC; e1=$ERR
+r "$SE" env CRUMB_TEST_NOW=$((NOW + 4)) CRUMB_SESSION=second "$C" claim worker . other.c takeover 600
+[ $c1 -eq 1 ] && printf '%s' "$e1" | grep -q 'MALFORMED_LEASE: .*session is not a non-empty string' && [ $RC -eq 1 ] && ok "N22 a lease without its session: check and claim exit 1 (MALFORMED_LEASE)" || { why; bad "N22 sessionless lease"; }
+cp "$T/lease-pristine.json" "$LR"
+
+# ---- N23 (review B4) crumb check on an initialized store whose .lock is missing: exit 1, lock never created ----
+NL="$T/nolock"; NLR="$T/nolock-root"; mkrepo "$NL" https://github.com/acme/nolock.git; enroll "$NL" "$NLR"
+r "$NL" "$C" claim alice . src/a.c x 600; rm -f "$NLR/.lock"
+r "$NL" "$C" check alice . src/a.c --key src/a.c --generation 1
+[ $RC -eq 1 ] && herr 'STORE_LOCK_MISSING' && [ ! -e "$NLR/.lock" ] && ok "N23 enforced layout-2 store without .lock: check exit 1 (no HELD), lock not created" || { why; bad "N23 enforced missing lock"; }
+git -C "$NL" config crumb.enforce false
+r "$NL" "$C" check alice . src/a.c
+[ $RC -eq 1 ] && herr 'STORE_LOCK_MISSING' && [ ! -e "$NLR/.lock" ] && ok "N23 the same layout-2 store outside enforcement: exit 1" || { why; bad "N23 layout-2 missing lock"; }
+git -C "$NL" config crumb.enforce true
+N1R="$T/nolock1"; mkrepo "$N1R" -
+r "$N1R" "$C" claim alice . src/a.c x 600; rm -f "$N1R/.git/crumb/v1/.lock"
+r "$N1R" "$C" check alice . src/a.c
+[ $RC -eq 1 ] && herr 'STORE_LOCK_MISSING' && [ ! -e "$N1R/.git/crumb/v1/.lock" ] && ok "N23 a used layout-1 store without .lock: exit 1, lock not created" || { why; bad "N23 layout-1 missing lock"; }
+N0R="$T/nolock0"; mkrepo "$N0R" -
+r "$N0R" "$C" check alice . src/a.c
+[ $RC -eq 2 ] && has '^REFUSED absent src/a.c' && [ ! -e "$N0R/.git/crumb" ] && ok "N23 control: a never-used compatibility store is still REFUSED absent (exit 2), nothing created" || { why; bad "N23 never-used store"; }
+
+# ---- N24 (review B5) ttl: the writer accepts exactly what the strict reader accepts (1..315360000 in enforcement) ----
+TT="$T/ttl"; mkrepo "$TT" https://github.com/acme/ttl.git; enroll "$TT" "$ROOT"; NS="$ROOT/repos/acme/ttl"
+r "$TT" "$C" claim alice . src/a.c base 600; s0=$(sum "$NS"); n=0; tot=0
+for v in 9223372036854775807 99999999999999999999999 2305843009213693952 315360001 -5 +5; do
+  tot=$((tot + 1)); r "$TT" "$C" claim bob . src/b.c x "$v"
+  if [ $RC -eq 1 ] && herr 'bad ttl' && [ "$(sum "$NS")" = "$s0" ]; then n=$((n + 1)); else echo "    ttl $v: rc=$RC $OUT"; fi
+done
+[ $n -eq $tot ] && ok "N24 $tot out-of-range or malformed ttls (LONG_MAX, overflow, LONG_MAX/4+1, 315360001, -5, +5): exit 1, store unchanged" || bad "N24 ttl range ($n of $tot)"
+r "$TT" env CRUMB_TEST_NOW=$NOW "$C" claim bob . src/b.c max 315360000; c1=$RC
+r "$TT" env CRUMB_TEST_NOW=$NOW "$C" check bob . src/b.c
+[ $c1 -eq 0 ] && [ $RC -eq 0 ] && has 'expires 2037-01-12T08:00:00Z$' && ok "N24 ttl 315360000 (3650 days) is accepted and checks HELD, expires 2037-01-12T08:00:00Z" || { why; bad "N24 max ttl"; }
+r "$TT" env CRUMB_TEST_NOW=$NOW "$C" claim carol . src/deep/d.c after 600
+[ $RC -eq 0 ] && ok "N24 the namespace is not poisoned: an unrelated claim succeeds" || { why; bad "N24 poisoned"; }
+s0=$(sum "$NS"); r "$TT" "$C" update carol . focus 0; c1=$RC; r "$TT" "$C" update carol . focus 315360001
+[ $c1 -eq 1 ] && [ $RC -eq 1 ] && [ "$(sum "$NS")" = "$s0" ] && ok "N24 update with ttl 0 or 315360001 in enforcement: exit 1, store unchanged" || { why; bad "N24 update ttl ($c1)"; }
+TL="$T/ttl1"; mkrepo "$TL" -
+r "$TL" "$C" claim alice . src/a.c x 9223372036854775807
+[ $RC -eq 1 ] && herr 'bad ttl' && [ ! -e "$TL/.git/crumb/v1/dirs/src.json" ] && ok "N24 layout 1 refuses an over-range ttl too (no record written)" || { why; bad "N24 layout-1 ttl"; }
+
+# ---- N25 (review B6) the generations high-water mark never decreases ----
+GW="$T/hwm"; mkrepo "$GW" https://github.com/acme/hwm.git; enroll "$GW" "$ROOT"; REC="$ROOT/repos/acme/hwm/dirs/src.json"
+r "$GW" "$C" claim alice . src/a.c g 600; cp "$REC" "$T/hwm-pristine.json"
+jq '.generations["src/a.c"]=10' "$T/hwm-pristine.json" > "$REC"; s0=$(cksum < "$REC")
+r "$GW" "$C" claim alice . src/a.c renew 600; c1=$RC; e1=$ERR; r "$GW" "$C" check alice . src/a.c
+[ $c1 -eq 1 ] && printf '%s' "$e1" | grep -q 'MALFORMED_LEASE: .*differs from the record.s generations counter' && [ $RC -eq 1 ] && [ "$(cksum < "$REC")" = "$s0" ] && ok "N25 enforcement: a live lease (generation 1) with counter 10: renewal and check exit 1, counter kept" || { why; bad "N25 enforced counter mismatch"; }
+H1="$T/hwm1"; mkrepo "$H1" -; R1="$H1/.git/crumb/v1/dirs/src.json"
+r "$H1" "$C" claim alice . src/a.c g 600; jq '.generations["src/a.c"]=10' "$R1" > "$T/r1.json" && cp "$T/r1.json" "$R1"
+r "$H1" "$C" claim alice . src/a.c renew 600; g1=$(gen); c10=$(jq -r '.generations["src/a.c"]' "$R1")
+r "$H1" "$C" close alice . src/a.c; r "$H1" "$C" claim bob . src/a.c next 600; g2=$(gen)
+[ "$g1" = 1 ] && [ "$c10" = 10 ] && [ "$g2" = 11 ] && ok "N25 layout 1: renewal keeps generation 1 and counter 10; the next acquisition is 11, never a reused 2" || bad "N25 high-water mark lowered (renew $g1 counter $c10 next $g2)"
+sed -e 's/"generation": 1$/"generation": 18446744073709551615/' -e 's/"src\/a.c": 1$/"src\/a.c": 18446744073709551615/' "$T/hwm-pristine.json" > "$REC"
+r "$GW" "$C" claim alice . src/a.c renew 600
+[ $RC -eq 0 ] && has 'generation 18446744073709551615$' && grep -q '"src/a.c": 18446744073709551615$' "$REC" && ok "N25 control: renewal at generation 2^64-1 keeps it" || { why; bad "N25 max renew"; }
+r "$GW" "$C" close alice . src/a.c; s0=$(cksum < "$REC"); r "$GW" "$C" claim bob . src/a.c next 600
+[ $RC -eq 1 ] && herr 'exhausted' && [ "$(cksum < "$REC")" = "$s0" ] && ok "N25 control: after 2^64-1 the counter is exhausted (exit 1), store unchanged, never wraps to 0 or 1" || { why; bad "N25 exhausted"; }
+
+# ---- N26 (review N1) git config crumb.enforce uses git's boolean conversion ----
+BO="$T/bool"; mkrepo "$BO" https://github.com/acme/bool.git; enroll "$BO" "$ROOT"; git -C "$BO" config --unset-all crumb.enforce
+printf '[crumb]\n\tenforce\n' >> "$BO/.git/config"
+r "$BO" "$C" claim alice . src/a.c x 0
+[ $RC -eq 1 ] && herr 'enforcement mode needs a positive ttl' && ok "N26 a valueless crumb.enforce key is true (git --bool): ttl 0 refused" || { why; bad "N26 valueless key ignored"; }
+git -C "$BO" config --unset-all crumb.enforce; git -C "$BO" config crumb.enforce maybe
+r "$BO" "$C" claim alice . src/a.c x 600
+[ $RC -eq 1 ] && herr 'crumb.enforce' && ok "N26 control: a non-boolean crumb.enforce is an error (exit 1), never absent" || { why; bad "N26 bad boolean"; }
+git -C "$BO" config crumb.enforce yes; r "$BO" "$C" claim alice . src/a.c x 0; c1=$RC
+git -C "$BO" config crumb.enforce off; r "$BO" "$C" claim alice . src/a.c x 0
+[ $c1 -eq 1 ] && [ $RC -eq 0 ] && ok "N26 control: yes enforces, off does not" || { why; bad "N26 yes/off ($c1)"; }
+git -C "$BO" config crumb.enforce true
+
+# ---- N27 (review N2) a repository id must start with an alphanumeric character (no '/single' alias of 'single') ----
+RI="$T/rid"; mkrepo "$RI" https://github.com/acme/rid.git; enroll "$RI" "$ROOT"
+r "$RI" env CRUMB_REPO_ID=single "$C" claim alice . src/a.c x 600; n=0
+for id in /single /acme/rid -single _single .single; do r "$RI" env CRUMB_REPO_ID="$id" "$C" check alice . src/a.c; [ $RC -eq 3 ] && herr REPO_ID_INVALID && n=$((n + 1)) || echo "    repo id $id: rc=$RC $OUT"; done
+[ $n -eq 5 ] && ok "N27 repo ids /single, /acme/rid, -single, _single, .single: REPO_ID_INVALID (exit 3)" || bad "N27 leading non-alphanumeric repo id ($n of 5)"
+git -C "$RI" config crumb.repoId /single; r "$RI" "$C" claim bob . src/b.c x 600; c1=$RC; git -C "$RI" config --unset crumb.repoId
+r "$RI" env CRUMB_REPO_ID=single "$C" check alice . src/a.c
+[ $c1 -eq 3 ] && [ $RC -eq 0 ] && ok "N27 git config crumb.repoId /single refused (exit 3); control: CRUMB_REPO_ID=single still HELD" || { why; bad "N27 config repo id ($c1)"; }
+
 echo "namespace/check/enforce: $( [ $fail -eq 0 ] && echo ALL PASS || echo FAILURES )"
 exit $fail
