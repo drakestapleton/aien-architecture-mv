@@ -6,8 +6,8 @@ omp-queen-ng, queen of Hive NG. This text follows the later of the two relayed i
 `DIRECTIVE-20261107-adr.md` (about 07:46Z) with consumption by pin and no ownership move.
 **Supersedes:** nothing. It works inside [ADR 0042](0042-omega-cudapp-bridge-ownership.md),
 [ADR 0043](0043-gpu-stack-portable-top-thin-backend.md) and [ADR 0044](0044-one-cubin-writer-per-nvidia-target-family.md):
-no ownership moves. Every GPU code generator NG uses, including the lowering of ΩIR kernels to BlackwellIR, is
-CUDApp-owned and consumed by omega-mv at a pinned commit.
+no ownership moves. Every code generator NG uses for a native GPU ISA (NVIDIA today), including the lowering of ΩIR
+kernels to BlackwellIR, is CUDApp-owned and consumed by omega-mv at a pinned commit.
 **Related:** ADR 0024 (Omega is the destination language), ADR 0042 Decision 4 (dependency by pin), ADR 0043
 Decision 0 (proof gate) and its ownership seam (new `.om` GPU code generators land in CUDApp).
 
@@ -58,12 +58,14 @@ pieces and NG consumes them by pin. This ADR applies that direction; it is a dec
 2. **omega-mv `seed/ng/**` holds Omega NG's compiler**: the front end, ΩIR (spec, reader, writer, validator), the
    optimizer, and the AArch64 back end. All of it is seeded Omega built by the seed chain: `seed/out/omc` compiles
    NG, then NG compiles itself to a fixpoint before it is proposed as a compiler pin. SPIR-V and WebAssembly come
-   from the existing omega-mv emitters retargeted to ΩIR. x86-64 and EFI stay with omc.
-3. **CUDApp owns every GPU code generator NG uses** (ADR 0042 Decision 2; ADR 0043 seam: "any new `.om` code
-   generator, including the `.om` successor of the sm_121 lowering", in CUDApp `backend/gb10/`; ADR 0044). That
-   covers the lowering of ΩIR kernels to BlackwellIR, the GPU register allocator `om/components/bw_alloc.om`, the
-   encoder `om/encoder/bw_enc_sm121.om`, the cubin writer `om/cubin/cubin_elf.om`, the driver client and the
-   runtime. The ΩIR-to-BlackwellIR lowering is written for CUDApp `backend/gb10/` and lands through CUDApp's own
+   from the existing omega-mv emitters retargeted to ΩIR; they are existing omega-mv code and stay there (ADR 0042
+   Decision 7; ADR 0043 section 9). x86-64 and EFI stay with omc.
+3. **CUDApp owns every code generator NG uses for a native GPU ISA (NVIDIA today)** (ADR 0042 Decision 2; ADR 0043
+   seam: "any new `.om` code generator, including the `.om` successor of the sm_121 lowering", in CUDApp
+   `backend/gb10/`; ADR 0044). That covers the lowering of ΩIR kernels to BlackwellIR, the GPU register allocator
+   `om/components/bw_alloc.om`, the encoder `om/encoder/bw_enc_sm121.om` and the cubin writer
+   `om/cubin/cubin_elf.om`, and, with them, the driver client and the runtime (ADR 0042 Decision 2). The
+   ΩIR-to-BlackwellIR lowering is written for CUDApp `backend/gb10/` and lands through CUDApp's own
    review queue (a pull request or Radicle patch under the desk's protocol) and owners. It reads ΩIR as specified by
    omega-mv at a pin (CUDApp consumes omega-mv at a
    pin, ADR 0042 Decision 4). Code under ADR 0043 keeps that ADR's Decision 0 gate: until P0's head-to-head is
