@@ -1,0 +1,1 @@
+an empty -consumed value is refused, not read as unset

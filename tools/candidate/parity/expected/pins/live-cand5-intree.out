@@ -1,0 +1,14 @@
+OK: sovereign-core omega.lock -> commits.omega = f9a9a40b598928fc6f92d7ffa6ff386941182663
+OK: sovereign-core Cargo.lock aien-protocols -> commits.aien-protocols = 28bc49ec57a89398fcb463cf71c0add7fcd2ef6c
+OK: sovereign-core Cargo.lock crumb-spec -> contracts.crumb-spec = 24194d1b7917ef19244aae6bcaff510686b75fef
+OK: sovereign-core Cargo.lock spark-crumbs -> contracts.spark-crumbs-consumed = in-tree (a path package with no git source, built from aien-sovereign-core dffdbd195edcbe1ec3bd2fa255355b15c530f31e)
+OK: omega aienos.lock -> commits.aienos = b84c0a67590a934f3f3e001b12ec85ebc086a9eb
+OK: omega physics.lock -> commits.physics = 048e5f5e881b092733baaf65d0ace46abda7f908
+OK: consumed_pins.sovereign-core-omega-lock = f9a9a40b598928fc6f92d7ffa6ff386941182663
+OK: consumed_pins.omega-aienos-lock = b84c0a67590a934f3f3e001b12ec85ebc086a9eb
+OK: consumed_pins.omega-argus-lock = b375dcaa2887d53cda407d773c2e4e489a0b1365
+OK: consumed_pins.omega-physics-lock = 048e5f5e881b092733baaf65d0ace46abda7f908
+SKIP: consumed_pins.omega-crumb-lock-aien-architecture (not read by this script)
+OK: consumed_pins.sovereign-core-cargo-lock-aien-protocols = 28bc49ec57a89398fcb463cf71c0add7fcd2ef6c
+PINS AGREE: m.toml
+rc=0

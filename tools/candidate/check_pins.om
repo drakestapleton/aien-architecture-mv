@@ -12,6 +12,11 @@ note   omega physics.lock                               = [commits] physics (whe
 note   omega aienos.lock                                = [commits] aienos
 note   every [consumed_pins] key it knows               = the value read from its lock file
 note A Cargo.lock package with more than one git revision, or a lock file that cannot be read, fails.
+note A Cargo.lock source counts under the repo's name or its -mv name (aien-dev/<name>-mv, issue 815,
+note sovereign-core #906); both names are one pin, so two revisions across them are "several".
+note A contract the manifest states as built in-tree, contracts.<name>-consumed = "in-tree" (sovereign-core
+note #892, mirroring its [pins] "in-tree"), must have a path package <name> (no source line) in Cargo.lock
+note and no git source under either name; its [contracts] commit is then not compared with Cargo.lock.
 note Files come from `gh api -H "Accept: application/vnd.github.raw" repos/aien-dev/<repo>/contents/<path>?ref=<sha>`,
 note or from the command in CAND_FILE_AT (run as: $CAND_FILE_AT <repo> <sha> <path>, printing the file).
 note Same lines, same order and same exit code as the bash it replaces: the [consumed_pins] walk
@@ -22,8 +27,8 @@ note 256 git revisions of one package in Cargo.lock, a child argument list of 40
 note See tools/candidate/README.md for the parsed subset and the named limits.
 
 text tsh "set -a\n. \"$1\"\nset +a\nshift\nexec \"$@\"\n"
-text tm "usage: \n <manifest.toml>\nFAIL: \nOK: \nmanifest lacks commits.aien-sovereign-core or commits.omega\nsovereign-core omega.lock -> commits.omega\n: not pinned in the manifest\n = \n: manifest pins \n, the code consumes \ncannot read omega.lock at aien-sovereign-core \nsovereign-core Cargo.lock \n -> \n: git revision \ncannot read Cargo.lock at aien-sovereign-core \nomega aienos.lock -> commits.aienos\ncannot read aienos.lock at omega \nomega physics.lock -> commits.physics\ncannot read physics.lock at omega \nSKIP: consumed_pins.\n (not read by this script)\nconsumed_pins.\n: its lock file could not be read\nPINS AGREE: \nPINS DISAGREE: \nnone\nseveral:\ncheck_pins: input over capacity\n"
-text tk "commits.aien-sovereign-core\ncommits.omega\ncommits.aienos\ncommits.physics\ncommits.aien-protocols\ncontracts.crumb-spec\ncontracts.spark-crumbs\naien-protocols\ncrumb-spec\nspark-crumbs\nomega.lock\nCargo.lock\nphysics.lock\naienos.lock\nargus.lock\naien-sovereign-core\nomega\nconsumed_pins.\nsovereign-core-omega-lock\nsovereign-core-cargo-lock-aien-protocols\nomega-physics-lock\nomega-aienos-lock\nomega-argus-lock\nCAND_FILE_AT\n/bin/sh\n-c\nsh\n/proc/self/fd/\ngh\napi\n-H\nAccept: application/vnd.github.raw\nrepos/aien-dev/\n/contents/\n?ref=\nenvfile\nsource = \"git+https://github.com/aien-dev/\n.git\n"
+text tm "usage: \n <manifest.toml>\nFAIL: \nOK: \nmanifest lacks commits.aien-sovereign-core or commits.omega\nsovereign-core omega.lock -> commits.omega\n: not pinned in the manifest\n = \n: manifest pins \n, the code consumes \ncannot read omega.lock at aien-sovereign-core \nsovereign-core Cargo.lock \n -> \n: git revision \ncannot read Cargo.lock at aien-sovereign-core \nomega aienos.lock -> commits.aienos\ncannot read aienos.lock at omega \nomega physics.lock -> commits.physics\ncannot read physics.lock at omega \nSKIP: consumed_pins.\n (not read by this script)\nconsumed_pins.\n: its lock file could not be read\nPINS AGREE: \nPINS DISAGREE: \nnone\nseveral:\ncheck_pins: input over capacity\n = in-tree (a path package with no git source, built from aien-sovereign-core \n)\n = in-tree, but Cargo.lock has a git source for it at \n = in-tree, but Cargo.lock has no path package named \n = \"\n\": the only accepted value is \"in-tree\"\n (Cargo.lock has a path package \n: the crate is built in-tree, which this manifest does not state with \n = \"in-tree\")\n"
+text tk "commits.aien-sovereign-core\ncommits.omega\ncommits.aienos\ncommits.physics\ncommits.aien-protocols\ncontracts.crumb-spec\ncontracts.spark-crumbs\naien-protocols\ncrumb-spec\nspark-crumbs\nomega.lock\nCargo.lock\nphysics.lock\naienos.lock\nargus.lock\naien-sovereign-core\nomega\nconsumed_pins.\nsovereign-core-omega-lock\nsovereign-core-cargo-lock-aien-protocols\nomega-physics-lock\nomega-aienos-lock\nomega-argus-lock\nCAND_FILE_AT\n/bin/sh\n-c\nsh\n/proc/self/fd/\ngh\napi\n-H\nAccept: application/vnd.github.raw\nrepos/aien-dev/\n/contents/\n?ref=\nenvfile\nsource = \"git+https://github.com/aien-dev/\n.git\n-mv\ncontracts.crumb-spec-consumed\ncontracts.spark-crumbs-consumed\nin-tree\n[[package]]\nname = \nsource = \n"
 
 const CAP ulong 999000
 const MASK ulong 4294967295
@@ -1129,6 +1134,7 @@ if eq n 0
 ret false
 end
 p = add p n
+p = add p capk p z 38
 p = add p capk p z 37
 if ge p z
 ret false
@@ -1281,6 +1287,9 @@ end
 
 note one Cargo.lock pair: package key p, manifest key q
 fn cargopair p ulong q ulong to void
+if intree p q
+ret
+end
 if cargorev p
 lab0
 labm 11
@@ -1299,7 +1308,186 @@ kp p
 oarg
 om 13
 orevs
+if ge q 5
+treehint p add q 34
+end
 fail1
+end
+
+note ---- in-tree contracts: contracts.<name>-consumed = "in-tree" (key q + 34), Cargo.lock path packages ----
+
+note the revisions in revs, separated by a space
+fn orevl to void
+for i ulong get revn 0
+if gt i 0
+oc 32
+end
+b = get obl 0
+for k ulong 40
+put obuf add b k get revs add mul i 40 k
+end
+put obl 0 add b 40
+end
+end
+
+note does the value of entry e equal key-table entry i
+fn valis e long i ulong to bool
+kp i
+n = get argl 0
+if ne vlen e n
+ret false
+end
+o = get vof ulong e
+for j ulong n
+if ne get pool add o j get arg j
+ret false
+end
+end
+ret true
+end
+
+note is cap[ls..z) the name line of package p: `name = "` p, then `"` or the line end (awk sub, as Core's gate)
+fn nameis ls ulong z ulong p ulong to bool
+n = capk ls z 43
+if eq n 0
+ret false
+end
+q = add ls n
+if ge q z
+ret false
+end
+if ne get cap q 34
+ret false
+end
+q = add q 1
+m = capk q z p
+if eq m 0
+ret false
+end
+q = add q m
+if ge q z
+ret true
+end
+ret eq get cap q 34
+end
+
+note does the Cargo.lock in cap hold a [[package]] named p with no source line (a path package)
+note Same state machine as the awk of sovereign-core scripts/check-release-candidate.sh (ce792cf5): a line
+note starting [[package]] closes the block before it, `name = ` sets the name, `source = ` marks a source.
+fn pathpkg p ulong to bool
+n = get capn 0
+ls = ulong 0
+nm = false
+sr = false
+while lt ls n bound 999999
+z = ls
+while and lt z n ne get cap z 10 bound 999999
+z = add z 1
+end
+if gt capk ls z 42 0
+if and nm not sr
+ret true
+end
+nm = false
+sr = false
+else
+if gt capk ls z 43 0
+nm = nameis ls z p
+end
+if gt capk ls z 44 0
+sr = true
+end
+end
+ls = add z 1
+end
+ret and nm not sr
+end
+
+note an undeclared contract with no git revision: name a path package, the in-tree form not stated
+fn treehint p ulong c ulong to void
+if gt get revn 0 0
+ret
+end
+if not pathpkg p
+ret
+end
+om 34
+kp p
+oarg
+om 35
+kp c
+oarg
+om 36
+end
+
+note the manifest states contract q as built in-tree: check it here and return true; false when not stated
+fn intree p ulong q ulong to bool
+if lt q 5
+ret false
+end
+c = add q 34
+e = kfind 0 c
+if lt e 0
+ret false
+end
+itcheck p c e
+ret true
+end
+
+fn itbad c ulong e long to void
+fail0
+kp c
+oarg
+om 32
+oval e
+om 33
+fail1
+end
+
+fn itfail p ulong c ulong to void
+fail0
+om 11
+kp p
+oarg
+om 12
+kp c
+oarg
+end
+
+fn itcheck p ulong c ulong e long to void
+if not valis e 41
+itbad c e
+ret
+end
+r = cargorev p
+if gt get revn 0 0
+itfail p c
+om 30
+orevl
+fail1
+ret
+end
+if not pathpkg p
+itfail p c
+om 31
+kp p
+oarg
+fail1
+ret
+end
+put obl 0 0
+om 3
+om 11
+kp p
+oarg
+om 12
+kp c
+oarg
+om 28
+oval kfind 0 0
+om 29
+oc 10
+oflush 1
 end
 
 fn consumed1 x ulong to void

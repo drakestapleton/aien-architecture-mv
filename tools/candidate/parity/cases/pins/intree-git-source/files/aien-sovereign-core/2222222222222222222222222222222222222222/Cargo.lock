@@ -1,0 +1,23 @@
+[[package]]
+name = "aien-protocol-types"
+source = "git+https://github.com/aien-dev/aien-protocols?rev=5555555555555555555555555555555555555555#5555555555555555555555555555555555555555"
+
+[[package]]
+name = "aien-probe"
+source = "git+https://github.com/aien-dev/aien-protocols?rev=5555555555555555555555555555555555555555#5555555555555555555555555555555555555555"
+
+[[package]]
+name = "crumb-spec"
+source = "git+https://github.com/aien-dev/crumb-spec?rev=6666666666666666666666666666666666666666#6666666666666666666666666666666666666666"
+
+[[package]]
+name = "spark-crumbs"
+
+[[package]]
+name = "serde"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[[package]]
+name = "spark-crumbs"
+version = "0.0.9"
+source = "git+https://github.com/aien-dev/spark-crumbs?rev=9999999999999999999999999999999999999999#9999999999999999999999999999999999999999"

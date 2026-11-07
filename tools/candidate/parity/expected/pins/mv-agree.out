@@ -1,0 +1,14 @@
+OK: sovereign-core omega.lock -> commits.omega = 1111111111111111111111111111111111111111
+OK: sovereign-core Cargo.lock aien-protocols -> commits.aien-protocols = 5555555555555555555555555555555555555555
+OK: sovereign-core Cargo.lock crumb-spec -> contracts.crumb-spec = 6666666666666666666666666666666666666666
+OK: sovereign-core Cargo.lock spark-crumbs -> contracts.spark-crumbs = 7777777777777777777777777777777777777777
+OK: omega aienos.lock -> commits.aienos = 3333333333333333333333333333333333333333
+OK: omega physics.lock -> commits.physics = 4444444444444444444444444444444444444444
+OK: consumed_pins.sovereign-core-omega-lock = 1111111111111111111111111111111111111111
+OK: consumed_pins.omega-aienos-lock = 3333333333333333333333333333333333333333
+SKIP: consumed_pins.something-else (not read by this script)
+OK: consumed_pins.omega-argus-lock = 8888888888888888888888888888888888888888
+OK: consumed_pins.omega-physics-lock = 4444444444444444444444444444444444444444
+OK: consumed_pins.sovereign-core-cargo-lock-aien-protocols = 5555555555555555555555555555555555555555
+PINS AGREE: m.toml
+rc=0
