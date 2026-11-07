@@ -182,7 +182,8 @@ echo x >> src/a.c; git add -A; "$C" context src/a.c | grep -q "^Crumbs STALE: 2 
 "$C" close lane-x src src/a.c >/dev/null
 [ "$("$C" context src | wc -l)" -lt 80 ] && ok "C3 context output is bounded" || bad "C3 context bounded"
 # orphan crumbs (lane CRUMB proof 19 b2, 2026-10-11): a .crumb under a directory that has NO .crumb is a child of the
-# nearest crumbed ancestor (D7 amended), so deleting it is visible to verify and to pr-gate.sh
+# nearest crumbed ancestor (D7 amended), so deleting it is visible to verify (pr-gate.sh also saw it until the
+# DRA-97 retirement, 2026-11-07; it no longer runs crumb verify)
 "$C" compile . >/dev/null; git add -A; git -c user.name=t -c user.email=t@t commit -qm "pre-orphan"
 mkdir -p src/mid/leaf && echo 'int l;' > src/mid/leaf/l.c && "$C" create src/mid/leaf leaf "leaf under an uncrumbed directory" code >/dev/null
 git add -A; st=$("$C" verify . | grep '^STALE' | awk '{print $2}' | sort | tr '\n' ' ')
