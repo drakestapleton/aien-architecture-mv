@@ -56,13 +56,13 @@ integrated own-model serving, measured training capacity, training and evaluatio
 
 | # | Row | Issue | Owner | Gate to start | Notes |
 |---|---|---|---|---|---|
-| 1 | CUDApp #280 chip rows (hello_gpu + control, NVRM lifecycle, M16 requal) at each new head, then at the merge sha | DRA-154, DRA-158 | lane CudaInteg280e | head built | Already in line; TensorFoldSpark waits behind it by its own commitment |
+| 1 | CUDApp #280 chip rows (hello_gpu + control, NVRM lifecycle, M16 requal) at each new head, then at the merge sha | DRA-154, DRA-158 | lane CudaInteg280e | head built | Already in line |
 | 2 | CUDApp main rows at the #280 merge sha (supersedes the main `b774723f` FAILs, which were host-build failures) | DRA-158 | CudaInteg280e | #280 merged | Pre-merge PASSes do not qualify main |
 | 3 | Own-model serving checks that touch the GPU, if any (`ollm serve` is CPU-only today, so the DRA-125 cutover itself needs no lease) | DRA-119, DRA-125 | ownmodel | candidate manifest frozen | Candidate ports 18291–18299 only |
 | 4 | v4 GB10 training path qualification legs: CPU parity, peak memory, checkpoint save and restore, tokens/s | DRA-183 | ownmodel (OllmV4Gpu) | v4 GPU code on its branch, host tests green | One leg per lease |
 | 5 | Rung 11 training legs, `geval` after each, driver detached | DRA-120 | ownmodel | a committed pre-registration (schedule + predicted held-out E) | Was BLOCKED on 2026-11-06 for missing pre-registration |
 | 6 | Personalization pilot fine-tune | DRA-146 | dra146 | ownmodel names the base checkpoint | One lease |
-| 7 | TensorFold baseline/profile rows | DRA-197 | TensorFoldSpark | after row 1's current lease | Ask on the BOARD first (its 22:34Z commitment) |
+| — | TensorFold baseline/profile rows | DRA-197 | TensorFoldSpark | Drake authorizes a measurement-only testbed on own weights | BLOCKED: the DRA-197 baseline used outside weights (Qwen3.5-2B); DRA-198..200 held (queen DECISIONS 2026-11-07T00:00:56Z). Not schedulable here until then |
 | — | D8 process tax | DRA-158 | CUDA lane | `hello_gpu` prints its overhead line | NOT_RUN until then; no ad-hoc substitute |
 | — | Core alpha pipeline GPU gates | DRA-41 | Core lane | an alpha tag and signature, and the CUDApp #106 decision | BLOCKED; agents do not tag or sign |
 | — | SI e2e ×3 | DRA-55 | SI release lane | stock/clean target and an own-model installer | BLOCKED (section 1) |
