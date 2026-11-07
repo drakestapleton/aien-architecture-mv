@@ -3,11 +3,13 @@ note gate: the ARCH-ZERO-LEGACY-CLOSURE gate runner (#316), seeded native Omega.
 note usage: gate OMC          (run from tools/zero-legacy; writes under build/)
 note Builds closure.om, expect.om and sha256.om with OMC, hashes OMC with the native sha256 and
 note compares it to omega.pin, runs the hostile and clean fixtures in release mode, judges the
-note reports with expect, prints AIEN-OBS lines. Exit 0 only when every expectation holds;
+note reports with expect, builds elfclose.om and fixtures/elfgen.om, generates the synthetic ELF
+note fixtures, runs elfclose over them and over fixtures/proc and judges both reports (#316
+note item 2), prints AIEN-OBS lines. Exit 0 only when every expectation holds;
 note 3 when OMC is missing or does not match the pin (NOT_RUN); 1 otherwise.
 note gate.sh authenticates the compiler independently before compiling this native fixture gate.
 
-text tbl "closure.om\nexpect.om\nsha256.om\nbuild/closure\nbuild/expect\nbuild/sha256\nfixtures/tree\nrelease\nfixtures/manifest.txt\nfixtures/clean\nfixtures/clean-manifest.txt\nfixtures/tree.expected\nfixtures/clean.expected\nbuild/tree.out\nbuild/clean.out\nbuild/clean2.out\nbuild/omc.sha\nbuild/closure.sha\nomega.pin\nbuild\nfixtures/io-build.om\nbuild/io-build\nbuild/io-errors.om\nbuild/io-errors\nfixtures/clean/src\nread-error\ndirectory-error\nbuild/read-error.out\nbuild/directory-error.out\n"
+text tbl "closure.om\nexpect.om\nsha256.om\nbuild/closure\nbuild/expect\nbuild/sha256\nfixtures/tree\nrelease\nfixtures/manifest.txt\nfixtures/clean\nfixtures/clean-manifest.txt\nfixtures/tree.expected\nfixtures/clean.expected\nbuild/tree.out\nbuild/clean.out\nbuild/clean2.out\nbuild/omc.sha\nbuild/closure.sha\nomega.pin\nbuild\nfixtures/io-build.om\nbuild/io-build\nbuild/io-errors.om\nbuild/io-errors\nfixtures/clean/src\nread-error\ndirectory-error\nbuild/read-error.out\nbuild/directory-error.out\nelfclose.om\nbuild/elfclose\nfixtures/elfgen.om\nbuild/elfgen\nbuild/elf\nelf\nproc\nfixtures/proc\nbuild/elf.out\nbuild/proc.out\nfixtures/elf.expected\nfixtures/proc.expected\nbuild/elf/dyn-gcc\nbuild/elf/dyn-nomark\nbuild/elf/badneed\nbuild/elf/need-nostr\nbuild/elf/strtab-unmapped\nbuild/elf/bad-shstrndx\nbuild/elf/static-rust\nbuild/elf/clang-lld\nbuild/elf/static-pie-go\nbuild/elf/bare\nbuild/elf/gnu-phdr\nbuild/elf/trunc\nbuild/elf/badph\nbuild/elf/elf32\nbuild/elf/bigend\nbuild/elf/notelf\nbuild/elf/absent\nbuild/elf/need-inject\nbuild/elf/need-comma\nbuild/elf/interp-tab\nbuild/elf/interp-del\nbuild/elf/load-wrap\nbuild/elf/esc\tname\\x\n"
 text tobs "AIEN-OBS "
 text tcls "closure_sha256 \""
 text tq "\"\n"
@@ -18,6 +20,12 @@ text tex1 "expect_tree_exit "
 text tex2 "expect_clean_exit "
 text trerr "read_error_exit "
 text tderr "directory_error_exit "
+text tegen "elfgen_exit "
+text telfs "elf_scan_exit "
+text tprcs "proc_scan_exit "
+text texel "expect_elf_exit "
+text texpr "expect_proc_exit "
+text txcr "cross_expect_refused "
 text tnl "\n"
 text tuse "usage: gate OMC\n"
 text tnot "gate: OMC missing or not the pinned compiler (NOT_RUN)\n"
@@ -325,6 +333,89 @@ setout out
 ret run
 end
 
+note ---- ELF and process closure (#316 item 2) ----
+
+fn elfgen to long
+pk0
+pkt 32
+pkt 33
+noio
+ret run
+end
+
+note elfclose elf over the 16 base fixtures, build/closure (real omc output), a missing path, the 6
+note hostile-string fixtures (control bytes, a comma, a wrapping PT_LOAD, a tab in the file name)
+note and the directory build/elf (not a regular file: UNREADABLE)
+fn elfscan to long
+pk0
+pkt 30
+pkt 34
+for i ulong 16
+pkt add 41 i
+end
+pkt 3
+pkt 57
+for j ulong 6
+pkt add 58 j
+end
+pkt 33
+put finl 0 0
+setout 37
+ret run
+end
+
+fn procscan to long
+pk0
+pkt 30
+pkt 35
+pkt 36
+put finl 0 0
+setout 38
+ret run
+end
+
+note run the ELF/process stage, print its observations; true when every expectation holds.
+note The cross judgment (process report against the ELF expectations) must be refused, so a
+note judge that accepts anything cannot pass this stage.
+fn elfstage to bool
+h = elfgen
+i = elfscan
+j = procscan
+k = judge 37 39
+l = judge 38 40
+m = judge 38 39
+x = long 0
+if ne m 0
+x = 1
+end
+obsn 7 h
+obsn 8 i
+obsn 9 j
+obsn 10 k
+obsn 11 l
+obsn 12 x
+ok = true
+if ne h 0
+ok = false
+end
+if ne i 0
+ok = false
+end
+if ne j 0
+ok = false
+end
+if ne k 0
+ok = false
+end
+if ne l 0
+ok = false
+end
+if ne x 1
+ok = false
+end
+ret ok
+end
+
 note ---- output ----
 
 fn wnum v long to void
@@ -378,6 +469,24 @@ end
 if eq k 6
 r = write 1 tderr 0 len tderr
 end
+if eq k 7
+r = write 1 tegen 0 len tegen
+end
+if eq k 8
+r = write 1 telfs 0 len telfs
+end
+if eq k 9
+r = write 1 tprcs 0 len tprcs
+end
+if eq k 10
+r = write 1 texel 0 len texel
+end
+if eq k 11
+r = write 1 texpr 0 len texpr
+end
+if eq k 12
+r = write 1 txcr 0 len txcr
+end
 wnum v
 r = write 1 tnl 0 1
 end
@@ -427,6 +536,16 @@ if not buildio
 r = write 2 tcf 0 len tcf
 ret 1
 end
+if not compile 29 30
+r = write 2 tcf 0 len tcf
+ret 1
+end
+if not compile 31 32
+r = write 2 tcf 0 len tcf
+ret 1
+end
+pick 33
+r = makedir arg 0 get argl 0 493
 obs1
 a = tree
 b = clean
@@ -442,6 +561,10 @@ obsn 3 d
 obsn 4 e
 obsn 5 f
 obsn 6 g
+y = elfstage
+if not y
+ret 1
+end
 if ne a 1
 ret 1
 end

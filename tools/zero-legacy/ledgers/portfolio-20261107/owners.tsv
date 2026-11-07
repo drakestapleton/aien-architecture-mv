@@ -1,0 +1,80 @@
+repo	archived	outstanding	unknown	owner
+aegis-runtime-mv	false	73	2	aien-dev/aegis-runtime-mv#75
+agent-archive	false	4	4	UNCOVERED (no #300 leaf)
+aien-architecture-mv	false	74	502	aien-dev/aien-architecture-mv#316
+aien-edge	false	5	2	aien-dev/aien-edge#7
+aien	false	32	111	UNCOVERED (no #300 leaf)
+aien-harness	true	2	0	ARCHIVED (frozen; no #300 leaf)
+aienix	false	1	0	UNCOVERED (no #300 leaf)
+aien-local-stack	true	6	0	ARCHIVED (frozen; no #300 leaf)
+aienos.com	false	193	864	aien-dev/aienos.com#79
+AienOS-nv	false	0	0	-
+aien-protocols-mv	false	89	2980	aien-dev/aien-protocols-mv#55
+aien-receipts	false	17	18	UNCOVERED (no #300 leaf)
+aien-rig	false	0	0	-
+aien-sovereign-core-mv	false	1129	2280	aien-dev/aien-sovereign-core-mv#753
+aien-train	false	101	4581	UNCOVERED (no #300 leaf)
+aien-translate	false	11	0	UNCOVERED (no #300 leaf)
+aienux	false	2587	810	aien-dev/aienux#452
+aien-yardsticks	true	22	1	ARCHIVED (frozen; no #300 leaf)
+atlas	false	10	15	aien-dev/atlas#9
+babel	false	16	0	UNCOVERED (no #300 leaf)
+benchmarks-mv	false	55	2299	aien-dev/benchmarks-mv#44
+cortex	false	33	14	UNCOVERED (no #300 leaf)
+cortex-rs	true	9	1	ARCHIVED (frozen; no #300 leaf)
+crumb-spec-mv	true	4	0	ARCHIVED (frozen; no #300 leaf)
+CUDApp	false	622	589	aien-dev/CUDApp#79
+encounter	true	0	0	ARCHIVED (frozen; no #300 leaf)
+ggml-omega	false	11	9	UNCOVERED (no #300 leaf)
+.github	false	0	1	-
+gpu-head-to-head	false	42	30	UNCOVERED (no #300 leaf)
+harvester	true	6	0	ARCHIVED (frozen; no #300 leaf)
+hive-not-swarm	false	4	4	UNCOVERED (no #300 leaf)
+homebrew-omega	false	0	1	-
+interplane.io	false	10	21	UNCOVERED (no #300 leaf)
+interplane-mv	false	136	57	aien-dev/interplane-mv#118
+mobhub	false	11	0	UNCOVERED (no #300 leaf)
+MojoLlama	true	223	210	ARCHIVED (frozen; no #300 leaf)
+omega-blas	false	11	15	UNCOVERED (no #300 leaf)
+omega-bridge	false	169	56	UNCOVERED (no #300 leaf)
+omega-bridge-kit	false	8	0	UNCOVERED (no #300 leaf)
+omega-dnn	false	11	35	UNCOVERED (no #300 leaf)
+omega-gpu-bench	false	13	6	UNCOVERED (no #300 leaf)
+omega-gpu-driver	false	73	8	UNCOVERED (no #300 leaf)
+omega-harness	false	3	236	UNCOVERED (no #300 leaf)
+omega-kernel-template	false	4	1	UNCOVERED (no #300 leaf)
+omega-lift	false	2	0	UNCOVERED (no #300 leaf)
+omega-mcp	false	9	1	UNCOVERED (no #300 leaf)
+omega-mv	false	2756	11186	aien-dev/omega-mv#725 aien-dev/omega-mv#726
+omega-packages	false	4	5	UNCOVERED (no #300 leaf)
+omega-projects	false	1	0	UNCOVERED (no #300 leaf)
+omega-rosetta	false	225	223	UNCOVERED (no #300 leaf)
+omega-seed-challenge	false	1	1	UNCOVERED (no #300 leaf)
+omnet	false	42	48	UNCOVERED (no #300 leaf)
+omtex	false	5	0	UNCOVERED (no #300 leaf)
+openaccel-lab	false	105	33	UNCOVERED (no #300 leaf)
+open-humanity	false	71	0	aien-dev/open-humanity#38
+physics0	true	0	0	ARCHIVED (frozen; no #300 leaf)
+physics-mv	false	144	20	aien-dev/physics-mv#81
+pi-register	false	1	0	UNCOVERED (no #300 leaf)
+rad-id-sync	true	5	0	ARCHIVED (frozen; no #300 leaf)
+readings-window	false	3	3	UNCOVERED (no #300 leaf)
+rtl8127-omega	false	6	2	UNCOVERED (no #300 leaf)
+sovereign-intelligence	false	42	93	UNCOVERED (no #300 leaf)
+spark-adapters	true	10	0	ARCHIVED (frozen; no #300 leaf)
+spark-connector	false	0	0	-
+spark-crumbs-mv	true	2	0	ARCHIVED (frozen; no #300 leaf)
+spark-debugger	true	5	0	ARCHIVED (frozen; no #300 leaf)
+spark-dream	true	2	0	ARCHIVED (frozen; no #300 leaf)
+spark-hive	true	6	0	ARCHIVED (frozen; no #300 leaf)
+spark-inquisitor	true	20	0	ARCHIVED (frozen; no #300 leaf)
+spark-rsi-mv	false	110	16	aien-dev/spark-rsi-mv#72
+spark-supervisor	false	7	5	UNCOVERED (no #300 leaf)
+synapse-board	false	2	7	UNCOVERED (no #300 leaf)
+synapse-claims	false	3	2	UNCOVERED (no #300 leaf)
+synapse	false	170	165	UNCOVERED (no #300 leaf)
+synapse-map	false	3	7	UNCOVERED (no #300 leaf)
+synapse-mcp	false	7	5	UNCOVERED (no #300 leaf)
+synapse-pulse	false	4	2	UNCOVERED (no #300 leaf)
+tree-sitter-omega	false	16	24	UNCOVERED (no #300 leaf)
+vscode-omega	false	2	7	UNCOVERED (no #300 leaf)

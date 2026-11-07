@@ -1,0 +1,328 @@
+note SPDX-License-Identifier: Apache-2.0
+note elfgen: writes the synthetic ELF fixtures for the elfclose gate (#316 item 2, DRA-178).
+note usage: elfgen DIR    (DIR must exist; writes the files named in tnm, 1024 bytes or less each)
+note Each file is a little ELF64 image with one property under test; see fixtures/elf.expected
+note for the row elfclose must print for each. None of them is executable code.
+
+text tnm "dyn-gcc\ndyn-nomark\nbadneed\nneed-nostr\nstrtab-unmapped\nbad-shstrndx\nstatic-rust\nclang-lld\nstatic-pie-go\nbare\ngnu-phdr\ntrunc\nbadph\nelf32\nbigend\nnotelf\nneed-inject\nneed-comma\ninterp-tab\ninterp-del\nload-wrap\nesc\tname\\x\n"
+text tsr "/lib/ld-linux-aarch64.so.1\nlibc.so.6\nlibm.so.6\nGCC: (Ubuntu 13.2.0) 13.2.0\nrustc version 1.98.1\nclang version 18.1.3\nLinker: LLD 18.1.3\n.comment\n.shstrtab\n.go.buildinfo\n#!/bin/sh\n"
+text tuse "usage: elfgen DIR\n"
+
+global ob uchar 1024
+global dir uchar 4096
+global dirn ulong 1
+global path uchar 4096
+
+fn clr to void
+for i ulong 1024
+put ob i 0
+end
+end
+
+fn w16 o ulong v ulong to void
+put ob o uchar and v 255
+put ob add o 1 uchar and shr v 8 255
+end
+
+fn w32 o ulong v ulong to void
+for i ulong 4
+put ob add o i uchar and shr v mul i 8 255
+end
+end
+
+fn w64 o ulong v ulong to void
+for i ulong 8
+put ob add o i uchar and shr v mul i 8 255
+end
+end
+
+note start of entry k of tsr
+fn sst k ulong to ulong
+s = ulong 0
+j = ulong 0
+while lt j k bound 4096
+if eq get tsr s 10
+j = add j 1
+end
+s = add s 1
+end
+ret s
+end
+
+note copy entry k of tsr to ob[o..], then a NUL; the entry length
+fn wstr o ulong k ulong to ulong
+s = sst k
+n = ulong 0
+while ne get tsr add s n 10 bound 256
+put ob add o n get tsr add s n
+n = add n 1
+end
+put ob add o n 0
+ret n
+end
+
+fn base ty ulong mach ulong phn ulong to void
+clr
+put ob 0 127
+put ob 1 69
+put ob 2 76
+put ob 3 70
+put ob 4 2
+put ob 5 1
+put ob 6 1
+w16 16 ty
+w16 18 mach
+w32 20 1
+w64 24 4096
+w64 32 64
+w16 52 64
+w16 54 56
+w16 56 phn
+end
+
+fn phd i ulong t ulong off ulong va ulong fz ulong to void
+b = add 64 mul i 56
+w32 b t
+w32 add b 4 5
+w64 add b 8 off
+w64 add b 16 va
+w64 add b 24 va
+w64 add b 32 fz
+w64 add b 40 fz
+w64 add b 48 8
+end
+
+fn dyn i ulong tag ulong v ulong to void
+b = add 544 mul i 16
+w64 b tag
+w64 add b 8 v
+end
+
+fn shd i ulong nm ulong t ulong off ulong sz ulong to void
+b = add 768 mul i 64
+w32 b nm
+w32 add b 4 t
+w64 add b 24 off
+w64 add b 32 sz
+w64 add b 48 1
+end
+
+note three sections: null, entry k of tsr at 672 (csz bytes), .shstrtab at 736
+fn secs3 k ulong csz ulong to void
+put ob 736 0
+a = wstr 737 k
+b = wstr add 738 a 8
+w64 40 768
+w16 58 64
+w16 60 3
+w16 62 2
+shd 1 1 1 672 csz
+shd 2 add a 2 3 736 add add a b 3
+end
+
+note write n bytes of ob to DIR/name, name = entry k of tnm
+fn save k ulong n ulong to bool
+d = get dirn 0
+for i ulong d
+put path i get dir i
+end
+put path d 47
+s = ulong 0
+j = ulong 0
+while lt j k bound 4096
+if eq get tnm s 10
+j = add j 1
+end
+s = add s 1
+end
+m = ulong 0
+while ne get tnm add s m 10 bound 64
+put path add add d 1 m get tnm add s m
+m = add m 1
+end
+fd = fopen path 0 add add d 1 m 577 420
+if lt fd 0
+ret false
+end
+r = write int fd ob 0 n
+c = fclose int fd
+ret eq r long n
+end
+
+fn dyngcc to void
+base 3 183 3
+phd 0 3 512 512 27
+a = wstr 512 0
+phd 1 1 0 65536 1024
+phd 2 2 544 544 80
+dyn 0 1 1
+dyn 1 1 11
+dyn 2 5 66160
+dyn 3 10 32
+dyn 4 0 0
+put ob 624 0
+b = wstr 625 1
+c = wstr 635 2
+d = wstr 672 3
+secs3 7 add d 1
+end
+
+fn bare to void
+base 2 183 1
+phd 0 1 0 0 1024
+end
+
+fn main to int
+if lt argcnt 2
+r = write 2 tuse 0 len tuse
+ret 64
+end
+n = argread 1 dir 0 4000
+if lt n 1
+ret 64
+end
+put dirn 0 ulong n
+ok = true
+dyngcc
+if not save 0 1024
+ok = false
+end
+note dyn-nomark: dyn-gcc without its section headers: no toolchain mark, but dynamic
+dyngcc
+w64 40 0
+w16 60 0
+w16 62 0
+if not save 1 1024
+ok = false
+end
+dyngcc
+dyn 0 1 9999
+if not save 2 1024
+ok = false
+end
+dyngcc
+dyn 2 0 0
+if not save 3 1024
+ok = false
+end
+dyngcc
+dyn 2 5 999999
+if not save 4 1024
+ok = false
+end
+dyngcc
+w16 62 3
+if not save 5 1024
+ok = false
+end
+base 2 62 1
+phd 0 1 0 4194304 1024
+a = wstr 672 4
+secs3 7 add a 1
+if not save 6 1024
+ok = false
+end
+base 2 183 1
+phd 0 1 0 0 1024
+a = wstr 672 5
+b = wstr add 673 a 6
+secs3 7 add add a b 2
+if not save 7 1024
+ok = false
+end
+base 3 183 2
+phd 0 1 0 0 1024
+phd 1 2 544 544 16
+dyn 0 0 0
+secs3 9 16
+if not save 8 1024
+ok = false
+end
+bare
+if not save 9 1024
+ok = false
+end
+base 2 183 2
+phd 0 1 0 0 1024
+phd 1 1685382481 0 0 0
+if not save 10 1024
+ok = false
+end
+bare
+if not save 11 40
+ok = false
+end
+bare
+put ob 32 240
+for i ulong 7
+put ob add 33 i 255
+end
+if not save 12 1024
+ok = false
+end
+bare
+put ob 4 1
+if not save 13 1024
+ok = false
+end
+bare
+put ob 5 2
+if not save 14 1024
+ok = false
+end
+clr
+a = wstr 0 10
+put ob a 10
+if not save 15 add a 1
+ok = false
+end
+note need-inject: dyn-gcc with its first DT_NEEDED name "libc.so.6" replaced by the 9 bytes
+note x, newline, E, L, F, tab, /, o, k: written raw it would end the row and forge an ELF row
+dyngcc
+put ob 625 120
+put ob 626 10
+put ob 627 69
+put ob 628 76
+put ob 629 70
+put ob 630 9
+put ob 631 47
+put ob 632 111
+put ob 633 107
+if not save 16 1024
+ok = false
+end
+note need-comma: "libc,so.6" would split into two names in the comma-separated field
+dyngcc
+put ob 629 44
+if not save 17 1024
+ok = false
+end
+note interp-tab and interp-del: a tab or a DEL inside the PT_INTERP path
+dyngcc
+put ob 516 9
+if not save 18 1024
+ok = false
+end
+dyngcc
+put ob 516 127
+if not save 19 1024
+ok = false
+end
+note load-wrap: the PT_LOAD file offset is 2^64-4096 and DT_STRTAB is 4720 past its vaddr, so
+note offset + (v - vaddr) wraps to 624, the real strtab; the PT_LOAD itself leaves the file
+dyngcc
+phd 1 1 sub ulong 0 4096 65536 8192
+dyn 2 5 70256
+if not save 20 1024
+ok = false
+end
+note esc<TAB>name\x: a clean ELF whose file name holds a tab and a backslash
+bare
+if not save 21 1024
+ok = false
+end
+if not ok
+ret 1
+end
+ret 0
+end
