@@ -500,10 +500,11 @@ r "$DN" "$C" claim bob . src/a.c takeover 600
 printf '[core]\n' > "$INC"
 r "$DN" "$C" check alice . src/a.c --key src/a.c --generation 1
 [ $RC -eq 0 ] && ok "N28 control: include restored, alice still HELD at generation 1" || { why; bad "N28 include restored"; }
+l0=$(cksum < "$NR/.crumb.local")
 r "$NR" env GIT_DIR="$T/not a git repository (or any of the parent directories)" "$C" claim bob . z.c z 600
-[ $RC -eq 1 ] && herr GIT_DISCOVERY_FAILED && [ ! -e "$NR/z.c" ] && ok "N28 an explicit GIT_DIR naming nothing (with the diagnostic words in its name): exit 1 GIT_DISCOVERY_FAILED" || { why; bad "N28 GIT_DIR words"; }
+[ $RC -eq 1 ] && herr GIT_DISCOVERY_FAILED && [ "$(cksum < "$NR/.crumb.local")" = "$l0" ] && ok "N28 an explicit GIT_DIR naming nothing (with the diagnostic words in its name): exit 1 GIT_DISCOVERY_FAILED, .crumb.local byte-identical" || { why; bad "N28 GIT_DIR words"; }
 r "$NR" env CRUMB_ENFORCE=1 "$C" claim bob . y.c y 600
-[ $RC -eq 1 ] && herr ENFORCE_NO_REPOSITORY && ok "N28 control: a genuine non-repository under enforcement is still ENFORCE_NO_REPOSITORY" || { why; bad "N28 non-repo enforced"; }
+[ $RC -eq 1 ] && herr ENFORCE_NO_REPOSITORY && [ "$(cksum < "$NR/.crumb.local")" = "$l0" ] && ok "N28 control: a genuine non-repository under enforcement is still ENFORCE_NO_REPOSITORY, .crumb.local byte-identical" || { why; bad "N28 non-repo enforced"; }
 
 # ---- N29 (review B8) store-init proves the layout-1 record directories empty whatever the enforcement mode ----
 # A layout-1 root with alice's flat lease on src/a.c (dirs/src.json, agents/alice.json); each case hides the records
