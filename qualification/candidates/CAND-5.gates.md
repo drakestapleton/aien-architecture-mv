@@ -69,3 +69,19 @@ CUDApp #280 (integration branch `integ/omega-cuda-stack`) merging, a CUDApp tag,
     `[contracts]` value is the archived `9355a92`.
   A checker change (accept `-mv` sources, and an in-tree contract) is a follow-up; until then CAND-5's `check_pins`
   result stays FAIL with these two named reasons, as CAND-0 and CAND-1 carry theirs.
+
+  **Note 2026-11-07 (checker change, no amendment; CAND-5.toml is not edited).** `check_pins.om` now reads `-mv`
+  sources and in-tree contracts (`tools/candidate/README.md`, DRA-46 follow-up). On CAND-5, with the lock files of
+  its pinned commits (read offline from local clones at sovereign-core `dffdbd19` and omega `f9a9a40`, and as the
+  parity case `live-cand5` on byte copies of the same git blobs), it prints PINS DISAGREE with exactly one FAIL line:
+  `sovereign-core Cargo.lock spark-crumbs: git revision none (Cargo.lock has a path package spark-crumbs: the crate is
+  built in-tree, which this manifest does not state with contracts.spark-crumbs-consumed = "in-tree")`. Every other
+  pin agrees, including aien-protocols `28bc49ec` (as `aien-protocols-mv`), crumb-spec `24194d1` (as `crumb-spec-mv`)
+  and `consumed_pins.sovereign-core-cargo-lock-aien-protocols`; `omega-crumb-lock-aien-architecture` is `SKIP` (not
+  read by the checker).
+  - **G1 closed** by the checker: a `-mv` source counts as its repo, and the old and `-mv` names are one pin.
+  - **G2** is now a stated, genuine difference rather than a checker gap. A manifest says a contract is built
+    in-tree with `[contracts] spark-crumbs-consumed = "in-tree"`; the checker then requires a path package and no git
+    source, as sovereign-core's own gate does for `[pins] spark-crumbs = "in-tree"` (ce792cf5). CAND-5 cannot gain
+    the key (an amendment may not touch `[contracts]`), so its `check_pins` result stays FAIL with this one named
+    reason. The same manifest with the key added agrees (parity case `live-cand5-intree`); a later candidate states it.

@@ -1,0 +1,89 @@
+# Candidate manifest, schema CandidateManifestV1. See docs/qualification/CANDIDATE.md.
+
+# Build recipe, results and limits: qualification/candidates/CAND-5.gates.md
+schema = "CandidateManifestV1"
+id = "CAND-5"
+status = "frozen"
+created = "2026-11-07"
+note = "First candidate since CAND-4 (2026-10-06), cut for the first tagged Core release (Linear DRA-46, DRA-51). It pins the GitHub mains of 2026-11-06: sovereign-core dffdbd19 (omega.lock f9a9a40; Cargo.lock aien-protocols-mv 28bc49ec, crumb-spec-mv 24194d1, spark-crumbs in-tree since sovereign-core #892) and omega f9a9a40 (physics.lock 048e5f5e, aienos.lock b84c0a6, argus.lock b375dca). Supersedes CAND-4 (CANDIDATE.md freeze rule 1: CAND-4.toml is not edited). ENGINE-ONLY: [model] names no model. Executable digests: clean-worktree double builds from two roots, CAND5-BUILD-A and CAND5-BUILD-B (cand5_build.sh, the cand4_build.sh method plus aien-serve-http): 26 of 26 identical in each root and across the roots. The GPU library is built from omega-mv f9a9a40, which is not a tagged commit of the canonical GPU repository (CUDApp, ADR 0042); see CAND-5.gates.md section 3 (DRA-41). Not qualified: see CAND-5.gates.md section 2."
+
+[commits]
+omega = "f9a9a40b598928fc6f92d7ffa6ff386941182663"
+aienos = "b84c0a67590a934f3f3e001b12ec85ebc086a9eb"
+aien-sovereign-core = "dffdbd195edcbe1ec3bd2fa255355b15c530f31e"
+aien-protocols = "28bc49ec57a89398fcb463cf71c0add7fcd2ef6c"
+aien-architecture = "c9dd6f37b6b83fad5e45662ee6ab423a8b74551d"
+physics = "048e5f5e881b092733baaf65d0ace46abda7f908"
+interplane = "e0d6863e2598a147babbf8b707b88c2aedba0872"
+# aien-protocols: sovereign-core consumes it as aien-dev/aien-protocols-mv (sovereign-core #906), the same repository.
+# aien-architecture: main at freeze (before this manifest). interplane: its main at freeze; not consumed by any CAND-5
+# build item.
+
+# The revisions the candidate code consumes (sovereign-core dffdbd19 Cargo.lock). crumb-spec is consumed as
+# aien-dev/crumb-spec-mv at this commit. spark-crumbs is NOT consumed from git: since sovereign-core #892 (DRA-95) the
+# crate is built from sovereign-core crates/spark-crumbs, so its contract revision is [commits] aien-sovereign-core.
+# The key keeps 9355a92, the archived spark-crumbs revision CAND-4 consumed, because check_candidate requires a commit
+# of that repository (CAND-5.gates.md gap G2).
+[contracts]
+crumb-spec = "24194d1b7917ef19244aae6bcaff510686b75fef"
+spark-crumbs = "9355a92bc9adfe95a6ec5f8ac926f38a0b6e7db2"
+spark-crumbs-consumed = "in-tree"
+
+# Pins that the pinned repos themselves hold, read from GitHub on 2026-11-06: sovereign-core dffdbd19 omega.lock and
+# Cargo.lock; omega f9a9a40 physics.lock, aienos.lock, argus.lock, crumb.lock.
+[consumed_pins]
+sovereign-core-omega-lock = "f9a9a40b598928fc6f92d7ffa6ff386941182663"
+sovereign-core-cargo-lock-aien-protocols = "28bc49ec57a89398fcb463cf71c0add7fcd2ef6c"
+omega-physics-lock = "048e5f5e881b092733baaf65d0ace46abda7f908"
+omega-aienos-lock = "b84c0a67590a934f3f3e001b12ec85ebc086a9eb"
+omega-argus-lock = "b375dcaa2887d53cda407d773c2e4e489a0b1365"
+omega-crumb-lock-aien-architecture = "d0f0b95d344b4c6628c3d868346932fd247ce168"
+
+# SHA-256 of each built binary, image or library under test: digests.txt of CAND5-BUILD-A (sha256 1b5435e9...),
+# byte-identical to CAND5-BUILD-B's. 26 entries, run 1 == run 2 in both roots. omega-librx-compose.a is written
+# omega-librx-compose (a dot would make a TOML dotted key). aien-serve-http-native-release is new in CAND-5.
+[executables]
+aien-cli-native-release = "a44c716c110ddbde9642ffb694fa05faac27d565fa9f66fd28f05185aba108f1"
+aien-serve-http-native-release = "6a6d84c55dbacb26d7240b4ee9d045447e818b774c165af9ca6e9c23521f5e80"
+aienos-boot-image = "a87a0118d17eedb39cccb90c743ba7d8b6a6c527397a5e2e3ae8f47fc2032b8f"
+aienos-ck-core-image = "869890ab339b8c759a2ab535e7eea2be082720da9be1368480682c21a505c18c"
+aien-proof = "614bead583caf0308faa3bcb382969333efc6415e9bc566a91b7e4d3a87e743c"
+aien-test = "100cb55fd4a2c8bd2788045919bb6bb01d703c1ce17a150c203edd0d75f00693"
+atlas-m2-boot-bin = "1d6d75a6881bb9d9b17a777ec7dee885780386c4699d776adc7cc1c277b09012"
+omega-gpu-engine-lib = "2ea0d7f0d26ba774e618e168c34331b6cb963046354cedf45f1125723c247a2f"
+omega-librx-compose = "28896316bdb7d0f98026280c48ddf4f9d6a651d21e1d4fc35972988d2dcae000"
+omega-r15-reduce = "1e6b6165744475e357e928925494e94fd79d6894843ed5fa70ab9ea30032021f"
+omega-runtime = "f953fae685ec5353018f44994b0f2850543ffe0e4db62eed35ebe22fa11e7c6d"
+omega-rx-composition-gate-gpu = "7861b3af394f48ae4c7ac508c42f197f524494198937c16ea4fee7bd4a442715"
+omega-rx-operator = "460c6d8a1787176027e7306121ed84c5d0567c2a3d2655564cf50010fed15079"
+omega-rx-r11-aien-test = "e4bc10a2a7fa5e9363398334a4acb2b8fc3162c29b175a9a979e378b4d9c7fce"
+omega-rx-r13-living-host = "d50b1793a25187fee1694cf9a1a8c86f9406b263ae688aed897499df2ac27cc1"
+omega-rx-r13-living-silicon = "55afdecbc3e9d7ea82b58de68efbe927fce6c23c822b22fdef974076b245e766"
+omega-rx-r13-living-testbuild-silicon = "08e8dbe46f55d225fcc68a1c948c9038cad4d473dd9291d916138cbfc9e5adb4"
+omega-rx-r15-perf-silicon = "4720de2e9b3c9d3a49013edc206852dd49103354805ec340299085191da36f1b"
+omega-rx-r15-perf-silicon-nodigest = "19d422eb3602b7c9a499883489f7ccfdaefd37981b54185c06a7687f21f1355c"
+physics-boot-bin = "4b22a08cd408b5cf90258af13b833b97a5211b4d2480fa74be357228f4aed3bd"
+sc-cortex-encoder-rs = "34061fb1984d0a9c3ce80d8b47f6d0978e9436a1f0e3c95db71691aeae1ec00f"
+sc-cortex-rs = "7587ad1275f50bfa0ada3929c28320c695c4d5086df0e21e7504d2748d028068"
+sc-spark-cockpit-rs = "b862ec7fe08fda6b9ebeeaaab7dd55fdfddcec5b5dba5ffc277af7ae08cd9617"
+sc-spark-debugger = "d430d5e7ab649935014e5ff54dfd788284e2f5b3aa682c3c568c1622726ab73b"
+sc-spark-inquisitor = "4f1287d68750ff6fde32684285d5aca7f52dbdc4de9d81a7bd4dfc0def3f43ae"
+sc-spark-supervisor = "00858dcb62c71d5f990d87c94c3939bf44bd1d1c01e9c845517cf7529587e3d2"
+
+# No model input. The engine is released without a qualified model: the only model tables on record are CAND-4's
+# Llama-3.2-1B-Instruct (internal-only, Drake 2026-10-06 Option 3) and the retired 35B (Drake 2026-11-06: outside
+# weights are no longer served or qualified). The own Omega LLM is served by aien-train's ollm, not by this engine,
+# and no checkpoint is selected yet (Linear DRA-124). sovereign-core's release gate accepts this form only with a
+# reason and no model digest. No real-model gate is run on CAND-5.
+[model]
+model-id = "none"
+reason = "engine-only candidate: no model is qualified with this engine (outside weights retired 2026-11-06; the own Omega LLM is served by aien-train ollm, checkpoint not selected, DRA-124)"
+
+[toolchain]
+rustc = "rustc 1.98.1 (48a229cea 2026-09-01), LLVM 22.1.8, host aarch64-unknown-linux-gnu"
+cargo = "cargo 1.98.1 (797e8a9bc 2026-08-05)"
+cc = "cc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0"
+make = "GNU Make 4.3"
+binutils = "GNU ld (GNU Binutils for Ubuntu) 2.42"
+mojo = "not used by the default build"
+source = "toolchain.txt in CAND5-BUILD-A and CAND5-BUILD-B, written by cand5_build.sh before the build"

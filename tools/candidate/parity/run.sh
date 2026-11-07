@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tools/candidate/parity/run.sh: the byte-for-byte parity oracle of the candidate checkers.
-# usage: run.sh <check_candidate-bin> <check_pins-bin> [record]
+# usage: run.sh <check_candidate-bin> <check_pins-bin> [record|record-extensions]
 # Every directory under cases/candidate and cases/pins is one case: m.toml (plus amendments or a
 # files/ tree), `mode` (sha | shawords | emptysha | gh | files: how the checker reaches commits and
 # lock files, all offline stubs under mktemp) and an optional `args` file (one argument per line,
@@ -13,6 +13,9 @@
 # failure, and reported if it ever becomes identical.
 # Six candidate cases also assert the exact kernel-repository rename against the frozen oracle;
 # unlike a limit, any other byte difference (or the old repository name) fails.
+# A case with an `extension` file tests behaviour added after the bash was deleted (-mv sources and
+# in-tree contracts, DRA-46): its expected file comes from `record-extensions` (the .om, reviewed by
+# hand), it is counted on its own "extensions:" line and any difference fails; `record` skips it.
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"
 cand="$1"; pins="$2"; mode="${3:-compare}"
@@ -47,7 +50,7 @@ if [ "$sha" = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef" ]; then echo "gh: Not F
 echo "$sha"
 S
 chmod +x "$tmp/stub" "$tmp/stubw" "$tmp/stubf" "$tmp/stubfw" "$tmp/bin/gh"
-same=0; diff=0; limits=0; renames=0
+same=0; diff=0; limits=0; renames=0; xsame=0; xdiff=0
 one() { # one <group> <bin> <casedir>
   local g="$1" bin="$2" d="$3" name; name="$(basename "$d")"
   local m; m="$(cat "$d/mode")"
@@ -66,6 +69,16 @@ one() { # one <group> <bin> <casedir>
     if [ -s "$tmp/gh.log" ]; then echo "-- gh calls --"; cat "$tmp/gh.log"; fi
   ) | sed "s|$bin|<bin>|g" > "$tmp/out"
   local exp="$here/expected/$g/$name.out"
+  if [ -f "$d/extension" ]; then
+    # An extension case (README "Extension cases"): behaviour the bash never had, so its expected
+    # file was recorded from the .om (record-extensions) and reviewed by hand. Counted apart from the
+    # frozen oracle; `record` (the bash oracle) never touches it.
+    if [ "$mode" = record ]; then return; fi
+    if [ "$mode" = record-extensions ]; then mkdir -p "$here/expected/$g"; cp "$tmp/out" "$exp"; xsame=$((xsame+1)); return; fi
+    if cmp -s "$tmp/out" "$exp"; then xsame=$((xsame+1))
+    else xdiff=$((xdiff+1)); echo "DIFF (extension): $g/$name"; diff "$exp" "$tmp/out" | sed 's/^/    /'; fi
+    return
+  fi
   if [ "$mode" = record ]; then mkdir -p "$here/expected/$g"; cp "$tmp/out" "$exp"; same=$((same+1)); return; fi
   case "$g/$name" in
     candidate/gh-404-contract|candidate/gh-404|candidate/gh-good|candidate/gh-live-cand0|candidate/nonexistent-sha|candidate/sha-check-unset-empty)
@@ -92,4 +105,5 @@ one() { # one <group> <bin> <casedir>
 for d in "$here"/cases/candidate/*/; do one candidate "$cand" "${d%/}"; done
 for d in "$here"/cases/pins/*/; do one pins "$pins" "${d%/}"; done
 echo "parity: $same identical, $renames exact naming deltas, $limits named limits, $diff different"
-[ "$diff" -eq 0 ]
+echo "extensions: $xsame identical, $xdiff different"
+[ "$diff" -eq 0 ] && [ "$xdiff" -eq 0 ]

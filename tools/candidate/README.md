@@ -26,6 +26,28 @@ or `[consumed_pins]`, `*-sha256` values real). `check_pins` fetches lock files
 or `$CAND_FILE_AT <repo> <sha> <path>`) and compares them with the manifest's pins and
 `[consumed_pins]`.
 
+Two additions to `check_pins` since the bash (DRA-46, CAND-5 gaps G1 and G2; tested by the
+extension cases below, never by the frozen oracle):
+
+- **`-mv` sources.** A Cargo.lock `source = "git+https://github.com/aien-dev/<name>-mv..."`
+  counts as `<name>` (issue 815; sovereign-core consumes `aien-protocols-mv` since #906 and
+  `crumb-spec-mv`). The old and the `-mv` name are one pin, so two revisions across them are
+  `several`. Any other suffix (`<name>-fork`, `<name>-mvx`) is not the repo.
+- **In-tree contracts.** `[contracts] crumb-spec-consumed = "in-tree"` or
+  `spark-crumbs-consumed = "in-tree"` states that sovereign-core builds that contract crate from
+  its own tree (spark-crumbs since sovereign-core #892), the meaning of sovereign-core's own
+  `[pins] spark-crumbs = "in-tree"` (`scripts/check-release-candidate.sh`, ce792cf5). Cargo.lock
+  must then hold a path package of that name (a `[[package]]` with that `name` and no `source`
+  line) and no git source for the repo under either name; the contract is then built at
+  `[commits] aien-sovereign-core`, and its `[contracts]` commit (still required by
+  `check_candidate`; CAND-5 keeps the archived revision CAND-4 consumed) is not compared with
+  Cargo.lock. Any other value of the key is refused. Without the key nothing changes: a contract
+  with no git revision fails as before, and when Cargo.lock holds a path package of that name the
+  FAIL line says so and names the key. There
+  is no in-tree form for `[commits] aien-protocols`. A frozen manifest cannot gain the key (an
+  amendment may not touch `[contracts]`), so CAND-5 keeps its one named difference (spark-crumbs);
+  later manifests state it.
+
 One deliberate change from the frozen bash: the key `commits.aienos` names the kernel repository,
 renamed to aien-dev/aienux, so `check_candidate` checks that pin as `<repo>` = `aienux`.
 The original oracle outputs remain unchanged; the runner asserts this exact naming delta.
@@ -58,7 +80,8 @@ Keys read by `check_candidate`: `schema`, `id`, `status`, `created`, `commits.om
 `commits.physics`, `commits.interplane`, every `executables.*`; in an amendment `schema`,
 `candidate`, `amendment`, `date`, `reason`, `manifest-sha256` and the added `section.key` entries.
 Keys read by `check_pins`: `commits.aien-sovereign-core`, `commits.omega`, `commits.aienos`,
-`commits.physics`, `commits.aien-protocols`, `contracts.crumb-spec`, `contracts.spark-crumbs` and
+`commits.physics`, `commits.aien-protocols`, `contracts.crumb-spec`, `contracts.spark-crumbs`,
+the optional `contracts.crumb-spec-consumed` and `contracts.spark-crumbs-consumed`, and
 every `consumed_pins.*` (`sovereign-core-omega-lock`, `sovereign-core-cargo-lock-aien-protocols`,
 `omega-physics-lock`, `omega-aienos-lock`, `omega-argus-lock` are compared; any other name is
 reported `SKIP`).
@@ -87,7 +110,7 @@ NUL bytes dropped, as `$(...)` does) and leaves stderr alone.
 
 ## Oracle and parity corpus (`parity/`)
 
-`parity/run.sh <check_candidate> <check_pins> [record]` runs every case under `parity/cases/`
+`parity/run.sh <check_candidate> <check_pins> [record|record-extensions]` runs every case under `parity/cases/`
 and compares stdout+stderr (one pipe, in order) plus `rc=N` with `parity/expected/`. The expected
 files were recorded from the bash scripts at 1dd84d1 (`record`), before they were deleted; the
 .om binaries must reproduce them byte for byte except for the exact naming delta below and the
@@ -111,10 +134,30 @@ actually change the oracle: refreshing it to the new name fails, as does reverti
 checker to the old name. Do not use `record` with the current checker to refresh the frozen
 shell oracle. PR #326's six hand-edited outputs were restored from its parent `a211260`.
 
+### Extension cases
+
+The frozen counts above do not change when `check_pins` gains behaviour the bash never had. Such
+behaviour is pinned by **extension cases**: 19 pins cases (`mv-*`, `intree-*`, `live-cand5`,
+`live-cand5-intree`, DRA-46) whose directory holds an `extension` file saying what the case pins.
+Their expected files were recorded from the .om with `run.sh <cc> <cp> record-extensions` (which
+records extension cases only and still compares every frozen case) and reviewed line by line; a
+plain `record` skips them. `run.sh` counts them on a second line, and any difference fails it:
+`extensions: 19 identical, 0 different`. The pre-extension checker (cd68086) gets 16 of them wrong
+(the three it passes, `mv-two-names-same`, `mv-prefix` and `intree-protocols-key`, pin behaviour
+that did not change). `live-cand5` runs the frozen CAND-5 manifest on byte copies of its pinned lock
+files (`scripts/testdata/cand5-locks/`: sovereign-core dffdbd19 `omega.lock` and `Cargo.lock`,
+omega f9a9a40 `aienos.lock`, `physics.lock`, `argus.lock`, the same git blobs; both live cases link
+their `files/` to it) and names exactly one
+difference, spark-crumbs; `live-cand5-intree` adds `contracts.spark-crumbs-consumed = "in-tree"`
+and agrees. `mkcases.sh` builds the extension cases too.
+
 The suites `scripts/test_check_candidate.sh` (47 checks, 7 mutants) and
 `scripts/test_check_candidate_pins.sh` (17 checks) compile the .om with `AIEN_OMC` and run it;
 their counts are the same as against the bash. The mutants are now sed edits of the .om source
 (`z = zero64 e`, `notq`, `NREQ`, `optpins`, `optpin`'s `shaex`, `mfeq`, `inmf`), recompiled.
+Since DRA-46 the pins suite also has 12 checks of `-mv` sources and in-tree contracts and 5 mutants
+(the `-mv` match, and in `itcheck`/`pathpkg` the git-source, path-package, source-line and word
+checks), 34 in all.
 `tests/gates/run.sh script-tests` refuses to run (exit 3, NOT_RUN) unless `AIEN_OMC` hashes as
 `tools/zero-legacy/omega.pin` pins, then runs the parity corpus and the four suites.
 

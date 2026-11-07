@@ -117,5 +117,54 @@ expect 1 "first line must be exactly the sha" "$tmp/m.toml" "cannot read aienos.
 tree
 sed '/^aien-sovereign-core = /d' "$tmp/m.toml" > "$tmp/h.toml"
 expect 1 "manifest without sovereign-core" "$tmp/h.toml" "lacks"
+# -mv sources (issue 815, sovereign-core #906): the -mv name is the same pin; both names together are one pin
+lock="$tmp/files/aien-sovereign-core/$SC/Cargo.lock"
+tree; sed -i -e 's|aien-dev/aien-protocols?|aien-dev/aien-protocols-mv?|' -e 's|aien-dev/crumb-spec?|aien-dev/crumb-spec-mv?|' \
+  -e 's|aien-dev/spark-crumbs?|aien-dev/spark-crumbs-mv.git?|' "$lock"
+expect 0 "every pin under its -mv name agrees" "$tmp/m.toml" "PINS AGREE"
+cp -r "$tmp/files" "$tmp/files-mv"   # kept for the -mv mutant below
+tree; sed -i "s|aien-protocols?rev=$PR#$PR|aien-protocols-mv?rev=$OTHER#$OTHER|" "$lock"
+expect 1 "-mv at a wrong revision is refused" "$tmp/m.toml" "aien-protocols -> commits.aien-protocols: manifest pins $PR, the code consumes $OTHER"
+tree; printf '\n[[package]]\nname = "aien-provenance"\nsource = "git+https://github.com/aien-dev/aien-protocols-mv?rev=%s#%s"\n' "$OTHER" "$OTHER" >> "$lock"
+expect 1 "old and -mv name at two revisions are refused" "$tmp/m.toml" "aien-protocols: git revision several:$PR $OTHER"
+tree; sed -i 's|aien-dev/crumb-spec?|aien-dev/crumb-spec-mvx?|' "$lock"
+expect 1 "a -mvx repo is not the -mv name" "$tmp/m.toml" "crumb-spec: git revision none"
+# in-tree contracts (sovereign-core #892): contracts.<name>-consumed = "in-tree" needs a path package and no git source
+intree() { tree; sed -i "/spark-crumbs?rev=$SP#$SP/d" "$lock"; }
+sed 's/^spark-crumbs = .*/&\nspark-crumbs-consumed = "in-tree"/' "$tmp/m.toml" > "$tmp/t.toml"
+intree
+expect 0 "in-tree stated with a path package and no git source agrees" "$tmp/t.toml" "contracts.spark-crumbs-consumed = in-tree (a path package"
+cp -r "$tmp/files" "$tmp/files-intree"   # kept for the in-tree word mutant below
+expect 1 "a path package the manifest does not state as in-tree is refused" "$tmp/m.toml" "does not state with contracts.spark-crumbs-consumed"
+intree; head -n -4 "$lock" > "$tmp/l"; cat "$tmp/l" > "$lock"
+expect 0 "the in-tree path package may be the last block" "$tmp/t.toml" "PINS AGREE"
+intree; printf '\n[[package]]\nname = "spark-crumbs"\nversion = "0.0.9"\nsource = "git+https://github.com/aien-dev/spark-crumbs?rev=%s#%s"\n' "$OTHER" "$OTHER" >> "$lock"
+expect 1 "in-tree with a git source is refused" "$tmp/t.toml" "in-tree, but Cargo.lock has a git source for it at $OTHER"
+cp -r "$tmp/files" "$tmp/files-git"   # kept for the git-source mutant below
+intree; printf '\n[[package]]\nname = "x"\nsource = "git+https://github.com/aien-dev/spark-crumbs-mv?rev=%s#%s"\n' "$SP" "$SP" >> "$lock"
+expect 1 "in-tree with a -mv git source is refused" "$tmp/t.toml" "has a git source for it at $SP"
+intree; sed -i 's/^name = "spark-crumbs"$/name = "spark-crumbs-extra"/' "$lock"
+expect 1 "in-tree with no package of that name is refused" "$tmp/t.toml" "no path package named spark-crumbs"
+cp -r "$tmp/files" "$tmp/files-nopkg"   # kept for the path-package mutant below
+tree; sed -i "s|^source = \"git+https://github.com/aien-dev/spark-crumbs?rev=$SP#$SP\"|source = \"registry+https://github.com/rust-lang/crates.io-index\"|" "$lock"
+expect 1 "in-tree with a registry package of that name is refused" "$tmp/t.toml" "no path package named spark-crumbs"
+cp -r "$tmp/files" "$tmp/files-reg"   # kept for the source-line mutant below
+intree; sed 's/^spark-crumbs-consumed = .*/spark-crumbs-consumed = "intree"/' "$tmp/t.toml" > "$tmp/w.toml"
+expect 1 "a misspelt in-tree word is refused" "$tmp/w.toml" "the only accepted value is"
+# --- mutants. Each broken copy of the checker (one sed edit of the .om source, recompiled) must give the
+# wrong verdict on the case it names, proving the test above depends on that check.
+mutant() { # mutant <label> <sed-expr> <files-dir> <manifest> <wrong-rc>
+  sed "$2" "$src" > "$tmp/mut.om"
+  if cmp -s "$src" "$tmp/mut.om"; then bad=$((bad+1)); echo "TEST FAIL: mutant '$1' did not change the checker"; return; fi
+  "$omc" < "$tmp/mut.om" > "$tmp/mut" 2>/dev/null && chmod +x "$tmp/mut" || { bad=$((bad+1)); echo "TEST FAIL: mutant '$1' does not compile"; return; }
+  rm -rf "$tmp/files"; cp -r "$3" "$tmp/files"
+  "$tmp/mut" "$4" >/dev/null 2>&1; rc=$?
+  if [ "$rc" = "$5" ]; then pass=$((pass+1)); else bad=$((bad+1)); echo "TEST FAIL: mutant '$1' gave rc=$rc, not the wrong $5: the test does not bite"; fi
+}
+mutant "-mv name not read" '/^p = add p capk p z 38$/d' "$tmp/files-mv" "$tmp/m.toml" 1
+mutant "in-tree git source not checked" '/^fn itcheck /,/^oflush 1$/s/^if gt get revn 0 0$/if false/' "$tmp/files-git" "$tmp/t.toml" 0
+mutant "in-tree path package not required" '/^fn itcheck /,/^oflush 1$/s/^if not pathpkg p$/if false/' "$tmp/files-nopkg" "$tmp/t.toml" 0
+mutant "source line of the package ignored" '/^fn pathpkg /,/^ret and nm not sr$/s/^sr = true$/sr = false/' "$tmp/files-reg" "$tmp/t.toml" 0
+mutant "in-tree word not checked" '/^fn itcheck /,/^oflush 1$/s/^if not valis e 41$/if false/' "$tmp/files-intree" "$tmp/w.toml" 0
 echo "check_candidate_pins tests: $pass passed, $bad failed"
 [ "$bad" -eq 0 ]

@@ -216,4 +216,56 @@ pk lock-nul; printf '%s\0\n' "$OM" > "$cur/files/aien-sovereign-core/$SC/omega.l
 pk cargo-big; for i in $(seq 1 800); do printf '[[package]]\nname = "pad-%d"\nsource = "registry+https://github.com/rust-lang/crates.io-index"\n\n' $i; done >> "$cur/files/aien-sovereign-core/$SC/Cargo.lock"
 pk cargo-dotgit-and-hash; sed -i "s|aien-protocols?rev=$PR#$PR|aien-protocols.git#$PR|" "$cur/files/aien-sovereign-core/$SC/Cargo.lock"
 pk file-at-words; echo fileswords > "$cur/mode"
+# ---------------- extension cases (after the bash: -mv sources, in-tree contracts; DRA-46) ----------------
+# The bash oracle never read aien-dev/<name>-mv sources or in-tree contracts, so these cases have no frozen
+# output: their expected files are recorded with run.sh ... record-extensions and reviewed by hand (README
+# "Extension cases"). The `extension` file says what each one pins.
+px() { pk "$1"; printf '%s\n' "$2" > "$cur/extension"; }
+lockf() { printf '%s' "$cur/files/aien-sovereign-core/$SC/Cargo.lock"; }
+intree() { # the spark-crumbs package becomes a path package (no source line); the manifest states it
+  sed -i "/spark-crumbs?rev=$SP#$SP/d" "$(lockf)"; sed -i 's/^spark-crumbs = .*/&\nspark-crumbs-consumed = "in-tree"/' "$cur/m.toml"; }
+px mv-agree "every Cargo.lock pin consumed under its -mv name (aien-protocols-mv, crumb-spec-mv, spark-crumbs-mv.git) agrees"
+sed -i -e 's|aien-dev/aien-protocols?|aien-dev/aien-protocols-mv?|' -e 's|aien-dev/crumb-spec?|aien-dev/crumb-spec-mv?|' -e 's|aien-dev/spark-crumbs?|aien-dev/spark-crumbs-mv.git?|' "$(lockf)"
+px mv-other "aien-protocols-mv at a revision the manifest does not pin is refused"
+sed -i "s|aien-protocols?rev=$PR#$PR|aien-protocols-mv?rev=$OTHER#$OTHER|" "$(lockf)"
+px mv-two-names "the old and the -mv name at two revisions are one pin with several revisions: refused"
+printf '\n[[package]]\nname = "aien-provenance"\nsource = "git+https://github.com/aien-dev/aien-protocols-mv?rev=%s#%s"\n' "$OTHER" "$OTHER" >> "$(lockf)"
+px mv-two-names-same "the old and the -mv name at the same revision are one revision: agrees"
+printf '\n[[package]]\nname = "aien-provenance"\nsource = "git+https://github.com/aien-dev/aien-protocols-mv?rev=%s#%s"\n' "$PR" "$PR" >> "$(lockf)"
+px mv-prefix "a repo named <name>-mvx is neither the repo nor its -mv name: no revision"
+sed -i 's|aien-dev/crumb-spec?|aien-dev/crumb-spec-mvx?|' "$(lockf)"
+px intree-agree "contracts.spark-crumbs-consumed = \"in-tree\" with a path package spark-crumbs and no git source agrees"
+intree
+px intree-eof "the in-tree path package is the last block of Cargo.lock (closed by the end of the file)"
+intree; head -n -4 "$(lockf)" > "$cur/l.tmp"; mv "$cur/l.tmp" "$(lockf)"
+px intree-crlf "the in-tree check on a CRLF Cargo.lock"
+intree; sed -i 's/$/\r/' "$(lockf)"
+px intree-crumb-spec "both contracts stated in-tree, each with its path package"
+intree; sed -i "/crumb-spec?rev=$CS#$CS/d" "$(lockf)"; sed -i 's/^crumb-spec = .*/&\ncrumb-spec-consumed = "in-tree"/' "$cur/m.toml"
+px intree-undeclared "a path package spark-crumbs the manifest does not state as in-tree: refused, naming the in-tree key"
+sed -i "/spark-crumbs?rev=$SP#$SP/d" "$(lockf)"
+px intree-git-source "in-tree stated, but Cargo.lock also has a git source for spark-crumbs: refused"
+intree; printf '\n[[package]]\nname = "spark-crumbs"\nversion = "0.0.9"\nsource = "git+https://github.com/aien-dev/spark-crumbs?rev=%s#%s"\n' "$OTHER" "$OTHER" >> "$(lockf)"
+px intree-mv-git-source "in-tree stated, but Cargo.lock has a git source under the -mv name: refused"
+intree; printf '\n[[package]]\nname = "spark-crumbs-mv-copy"\nsource = "git+https://github.com/aien-dev/spark-crumbs-mv?rev=%s#%s"\n' "$SP" "$SP" >> "$(lockf)"
+px intree-no-package "in-tree stated, but no package of that name (only spark-crumbs-extra): refused"
+intree; sed -i 's/^name = "spark-crumbs"$/name = "spark-crumbs-extra"/' "$(lockf)"
+px intree-registry "in-tree stated, but the package of that name has a (registry) source line: refused"
+sed -i "s|^source = \"git+https://github.com/aien-dev/spark-crumbs?rev=$SP#$SP\"|source = \"registry+https://github.com/rust-lang/crates.io-index\"|" "$(lockf)"; sed -i 's/^spark-crumbs = .*/&\nspark-crumbs-consumed = "in-tree"/' "$cur/m.toml"
+px intree-word "a -consumed value other than \"in-tree\" is refused"
+intree; sed -i 's/^spark-crumbs-consumed = .*/spark-crumbs-consumed = "intree"/' "$cur/m.toml"
+px intree-empty-value "an empty -consumed value is refused, not read as unset"
+intree; sed -i 's/^spark-crumbs-consumed = .*/spark-crumbs-consumed = ""/' "$cur/m.toml"
+px intree-protocols-key "there is no in-tree form for [commits] aien-protocols: a commits.aien-protocols-consumed key is ignored"
+sed -i "/aien-protocols?rev=$PR#$PR/d" "$(lockf)"; sed -i 's/^aien-protocols = .*/&\naien-protocols-consumed = "in-tree"/' "$cur/m.toml"
+# The live CAND-5 manifest with the lock files of its pinned commits (scripts/testdata/cand5-locks: sovereign-core
+# dffdbd19 omega.lock and Cargo.lock, omega f9a9a40 aienos.lock, physics.lock, argus.lock, byte copies of those
+# git blobs). It names exactly one difference, spark-crumbs; the -intree copy adds the key a later manifest states.
+c5="$repo/qualification/candidates/CAND-5.toml"
+c5files() { # one copy of the real lock files: the case's files/ is a relative symlink to scripts/testdata/cand5-locks
+  ln -s "$(realpath --relative-to="$cur" "$repo/scripts/testdata/cand5-locks")" "$cur/files"; }
+px live-cand5 "the frozen CAND-5 manifest and its real lock files: only spark-crumbs differs (built in-tree; CAND-5 cannot state it)"
+synth "$c5" > "$cur/m.toml"; rm -r "$cur/files"; c5files
+px live-cand5-intree "CAND-5 plus contracts.spark-crumbs-consumed = \"in-tree\" (the form for later candidates) and its real lock files: agrees"
+synth "$c5" | sed 's/^spark-crumbs = .*/&\nspark-crumbs-consumed = "in-tree"/' > "$cur/m.toml"; rm -r "$cur/files"; c5files
 echo "cases: $(ls "$C" | wc -l) candidate, $(ls "$P" | wc -l) pins"

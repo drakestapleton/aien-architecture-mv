@@ -16,7 +16,7 @@ run:
   args: ["script-tests"]
 expects:
   exit: 0
-  observe: ["script_tests_run == 4", "candidate_parity_different == 0"]
+  observe: ["script_tests_run == 4", "candidate_parity_different == 0", "candidate_extensions_different == 0"]
   verdict: PASS
 timeout: 10m
 exactness: EXACT
