@@ -1,0 +1,34 @@
+# procsnap 2026-11-07T03:43:00Z elfclose 9026b0e850001351
+# ELF 0
+# FOREIGN 219
+# UNMARKED 32
+# UNKNOWN 429
+# PROC 680
+# MAP 2133
+# NOEXE 6
+# MAPTRUNC 0
+# owner class verdict count
+COUNT	other	UNREADABLE	UNKNOWN	413
+COUNT	self	ELF64LE	FOREIGN	219
+COUNT	self	ELF64LE	UNMARKED	32
+COUNT	self	UNREADABLE	UNKNOWN	16
+# group exe verdict producer link processes sha256
+EXE	first-party-candidate	b/accept (deleted)	UNMARKED	none	static	1	a20097120cc6c521d497fb2401a434728b51adc3a0616ac8d89cd4b35eb387ad
+EXE	first-party-candidate	bin/aienos-waitlist	FOREIGN	gcc+clang+rustc+gnu+crt+note	dynamic	1	96333c1c80c0a9aecb4f1b971529f49b452771017006dd9f5ca9dff5a687dd6c
+EXE	first-party-candidate	b/ollm	UNMARKED	none	static	1	beecf5fa3463c36dc44c7e4aa823aa747b55e5d0871a726d52dad243971c7631
+EXE	first-party-candidate	build-astra/ollm	UNMARKED	none	static	2	5bff239b4ed83c8cca5bf444398327790196d2834697c9cd4bff573561a06573
+EXE	first-party-candidate	build/omega-mcp	UNMARKED	none	static	14	fd656065a3d6d5928e32cededb0b4835d19ed200a28f0bf8066866d818c08688
+EXE	first-party-candidate	debug/aien-serve-http (deleted)	FOREIGN	gcc+clang+rustc+gnu+crt+note	dynamic	1	-
+EXE	first-party-candidate	debug/oh-infer-coordinator (deleted)	FOREIGN	gcc+clang+rustc+gnu+crt+note	dynamic	1	-
+EXE	first-party-candidate	host/ck_imac_netboot	FOREIGN	gcc+gnu+crt+note	dynamic	1	99342e6fcf4e75a46ed34c67e0e2aa9d8fb22287c488fcf64ebecd58cb3cd6bf
+EXE	first-party-candidate	imac-listener/ck_imac_report_listen	FOREIGN	gcc+gnu+crt+note	dynamic	1	45947552660b43320026e6d6f71d44181ad5c13935523dd912fad5a694a990ac
+EXE	first-party-candidate	node/code-main	UNMARKED	none	static	3	6071fa6c28e12aa7846f48f9065718618a533ac0da9acb6ed3898797ed0b0dcd
+EXE	first-party-candidate	node/infer	UNMARKED	none	static	1	8cc5fb3044c9c794326e66b57aac7c6889c5cf498f4750503637d97505c1f806
+EXE	first-party-candidate	omega-node-ollm/ollm	UNMARKED	none	static	1	f99fce9fe914f51b708af5b39c8f07856bdcc6f4523dd43fa457f0d26aaa4745
+EXE	first-party-candidate	release/aien-test	FOREIGN	gcc+clang+rustc+gnu+crt+note	dynamic	1	c36cbbd82ae9a844a4fd633607e76e90bb6de37f2cd1d88b30f503f416b17b98
+EXE	first-party-candidate	round40-fast/server	UNMARKED	none	static	1	092c1953924ca7a52e19fec309065b3efb50f034bf0ba561cc819543f4734085
+EXE	first-party-candidate	round40-workbench/server	UNMARKED	none	static	1	8f6fc0fd73302661e9768f9a50301d535b80f9a32b09bf2fd81e7a84fc82e240
+EXE	first-party-candidate	vm3_no_oper_replay/code-main	UNMARKED	none	static	4	e90cf8443f57cae8f874a6ed2d0cd26dbdf53829883d0890f9bc9defc2daa09c
+EXE	first-party-candidate	vm3_no_oper_replay/fake-serve	UNMARKED	none	static	1	9397ef1ff5e2250e60109fd51edc009e01ed0c5662176701bbaa84d3735b1a87
+EXE	first-party-candidate	vm3_no_oper_replay/infer	UNMARKED	none	static	1	8cc5fb3044c9c794326e66b57aac7c6889c5cf498f4750503637d97505c1f806
+EXE	first-party-candidate	zl/elfclose	UNMARKED	none	static	1	-

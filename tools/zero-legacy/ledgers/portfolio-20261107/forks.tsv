@@ -1,0 +1,12 @@
+repo	archived	disposition
+arm-trusted-firmware	true	fork: upstream code, not first-party; not scanned
+BabelStream	false	fork: upstream code, not first-party; not scanned
+compiler-explorer	false	fork: upstream code, not first-party; not scanned
+edk2-non-osi	false	fork: upstream code, not first-party; not scanned
+edk2-platforms	true	fork: upstream code, not first-party; not scanned
+edk2	true	fork: upstream code, not first-party; not scanned
+infra	false	fork: upstream code, not first-party; not scanned
+odysseus	true	fork: upstream code, not first-party; not scanned
+rpi5-uefi	false	fork: upstream code, not first-party; not scanned
+t3code	false	fork: upstream code, not first-party; not scanned
+translate	true	fork: upstream code, not first-party; not scanned
