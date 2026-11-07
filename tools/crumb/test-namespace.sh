@@ -270,5 +270,23 @@ i=1; while [ $i -le 8 ]; do k=src; [ $((i % 2)) -eq 0 ] && k=src/a.c; ( cd "$T/o
 w=$(cat "$T"/rn.[1-8] | grep -c '^0$'); b=$(cat "$T"/rn.[1-8] | grep -c '^2$')
 [ "$w" -eq 1 ] && [ "$b" -eq 7 ] && ok "N17 8 concurrent claims of src and src/a.c (overlapping keys): exactly 1 exit 0" || bad "N17 nested race (wins=$w blocked=$b)"
 
+# ---- N18 key-qualified fencing token (trace found by the Lean model, evidence/proof-lean obs_number_only_check_accepts) ----
+# Generations count per key, so a bare number can match a different covering lease: alice holds src/a.c at
+# generation 1, it expires, bob takes it (2), that expires, alice claims the ancestor src (its own generation 1).
+# check alice src/a.c --generation 1 is then HELD through src; --key src/a.c --generation 1 must be REFUSED.
+K="$T/keytok"; mkrepo "$K" https://github.com/acme/keytok.git; enroll "$K" "$ROOT"
+r "$K" env CRUMB_TEST_NOW=$NOW "$C" claim alice . src/a.c first 100
+r "$K" env CRUMB_TEST_NOW=$((NOW + 101)) "$C" claim bob . src/a.c second 100; gb=$(gen)
+r "$K" env CRUMB_TEST_NOW=$((NOW + 202)) "$C" claim alice . src third 100; ga=$(gen)
+[ "$gb" = 2 ] && [ "$ga" = 1 ] && ok "N18 trace: bob re-acquires src/a.c (generation 2), alice then claims src (generation 1)" || { why; bad "N18 trace ($gb $ga)"; }
+r "$K" env CRUMB_TEST_NOW=$((NOW + 210)) "$C" check alice . src/a.c --generation 1
+[ $RC -eq 0 ] && has '^HELD src/a.c by alice key src generation 1 ' && ok "N18 a bare --generation 1 is satisfied by the ancestor lease (why a token must name its key)" || { why; bad "N18 bare number"; }
+r "$K" env CRUMB_TEST_NOW=$((NOW + 210)) "$C" check alice . src/a.c --key src/a.c --generation 1
+[ $RC -eq 2 ] && has '^REFUSED key src!=src/a.c src/a.c generation 1 by alice ' && ok "N18 --key src/a.c --generation 1 (the stale token): REFUSED key (exit 2)" || { why; bad "N18 keyed stale token"; }
+r "$K" env CRUMB_TEST_NOW=$((NOW + 210)) "$C" check alice . src/a.c --generation 1 --key src
+[ $RC -eq 0 ] && ok "N18 the current token (--key src --generation 1, either order) is HELD (exit 0)" || { why; bad "N18 keyed current token"; }
+r "$K" "$C" check alice . src/a.c --key src --key src
+[ $RC -eq 1 ] && ok "N18 a repeated --key is a usage error (exit 1)" || { why; bad "N18 repeated key"; }
+
 echo "namespace/check/enforce: $( [ $fail -eq 0 ] && echo ALL PASS || echo FAILURES )"
 exit $fail

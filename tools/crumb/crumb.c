@@ -13,7 +13,7 @@
  *   crumb validate [path]
  *   crumb store-id [dir]            print the coordination store id (STORE_ID marker, shared with synapse-coord)
  *   crumb store-init [dir]          deliberately create a layout-2 (repository-namespaced) coordination root
- *   crumb check <agent> <dir> <target> [--generation N]   read-only: is target covered by agent's valid lease?
+ *   crumb check <agent> <dir> <target> [--generation N] [--key K]   read-only: is target covered by agent's valid lease?
  *   crumb --strict <command> ...    refuse an unregistered coordination store (also CRUMB_STRICT_STORE_ID=1)
  *   crumb --enforce <command> ...   fail-closed enforcement mode (also CRUMB_ENFORCE=1, git config crumb.enforce true)
  * Registered store identity: CRUMB_EXPECT_STORE_ID, else `git config crumb.storeId` (aien-architecture#234).
@@ -1322,8 +1322,10 @@ static int cmd_close(const char *agent, const char *dir, const char *target, con
  * pruned or written. The leases on target and on every ancestor key (up to "." = the whole repository) are judged
  * with the strict schema in enforcement mode (lenient otherwise; malformed = exit 1 either way). Exit 0 only when a
  * valid lease on target or an ancestor is held by exactly <agent>, no other agent holds a valid lease on target or
- * an ancestor, and (when given) the nearest such lease has generation N. Exit 2 otherwise (REFUSED line). */
-static int cmd_check(const char *agent, const char *dir, const char *target, int has_want, unsigned long long want) {
+ * an ancestor, and (when given) the nearest such lease has generation N and key K. Generations are counted per key,
+ * so a bare number is ambiguous across keys (an ancestor lease can carry the same number later); a writer that
+ * re-checks a token passes both --key and --generation, exactly as printed on the HELD line. Exit 2 otherwise. */
+static int cmd_check(const char *agent, const char *dir, const char *target, int has_want, unsigned long long want, const char *want_key) {
     Plane *p = plane_resolve(dir);
     if (!p) die("check needs a git repository: %s", dir);
     agent_require(p, agent);
@@ -1369,6 +1371,7 @@ static int cmd_check(const char *agent, const char *dir, const char *target, int
     }
     if (mine_key) {
         iso_of(mine.acq + mine.ttl, ex);
+        if (want_key && strcmp(mine_key, want_key)) { printf("REFUSED key %s!=%s %s generation %llu by %s expires %s\n", mine_key, want_key, key, mine.gen, agent, ex); return 2; }
         if (has_want && mine.gen != want) { printf("REFUSED generation %llu!=%llu %s key %s by %s expires %s\n", mine.gen, want, key, mine_key, agent, ex); return 2; }
         printf("HELD %s by %s key %s generation %llu expires %s\n", key, agent, mine_key, mine.gen, ex);
         return 0;
@@ -2759,7 +2762,7 @@ static void usage(void) {
           "  validate [path]                             check .crumb files against RFC-0001 required fields\n"
           "  store-id [dir]                              print the coordination store id (creates it if unregistered and absent)\n"
           "  store-init [dir]                            make the coordination root layout 2 (repos/<repo-id>/ namespaces), deliberately\n"
-          "  check <agent> <dir> <target> [--generation N]  read-only: exit 0 only if agent holds a valid lease on target or an ancestor\n"
+          "  check <agent> <dir> <target> [--generation N] [--key K]  read-only: exit 0 only if agent holds a valid lease on target or an ancestor\n"
           "store identity: expected id from CRUMB_EXPECT_STORE_ID, else git config crumb.storeId; --strict or\n"
           "  CRUMB_STRICT_STORE_ID=1 refuses unregistered stores. Exit 3 = store identity refusal, 4 = refused store file.\n"
           "repository id (layout 2): CRUMB_REPO_ID, else git config crumb.repoId, else origin URL <owner>/<repo>.\n"
@@ -2803,7 +2806,15 @@ int main(int argc, char **argv) {
     if (!strcmp(c, "resume") && a == 1) return cmd_resume(v[0]);
     if (!strcmp(c, "store-id") && a <= 1) return cmd_store_id(a ? v[0] : ".");
     if (!strcmp(c, "store-init") && a <= 1) return cmd_store_init(a ? v[0] : ".");
-    if (!strcmp(c, "check") && (a == 3 || (a == 5 && !strcmp(v[3], "--generation")))) return cmd_check(v[0], v[1], v[2], a == 5, a == 5 ? gen_arg(v[4]) : 0);
+    if (!strcmp(c, "check") && a >= 3 && (a - 3) % 2 == 0 && a <= 7) {
+        int has_want = 0; unsigned long long want = 0; const char *want_key = NULL;
+        for (int i = 3; i < a; i += 2) {
+            if (!strcmp(v[i], "--generation") && !has_want) { has_want = 1; want = gen_arg(v[i + 1]); }
+            else if (!strcmp(v[i], "--key") && !want_key && *v[i + 1]) want_key = v[i + 1];
+            else usage();
+        }
+        return cmd_check(v[0], v[1], v[2], has_want, want, want_key);
+    }
     if (!strcmp(c, "list") || !strcmp(c, "validate")) {
         int val = !strcmp(c, "validate"); Tot t = {0, 0, 0};
         char *r = absdir(a ? v[0] : ".");

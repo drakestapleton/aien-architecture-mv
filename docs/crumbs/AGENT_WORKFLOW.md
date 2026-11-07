@@ -22,7 +22,7 @@ crumb close   <agent> <dir> <target> modify "<what landed>"   # after pushing
 In a repository with `git config crumb.enforce true` (or `CRUMB_ENFORCE=1`) the write gate of your runtime runs `crumb check <you> <repo-root> <path>` before each write and blocks on anything but exit 0. So:
 - Your `<agent>` is `<agent-name>.<session-id>` (matches `^[A-Za-z0-9][A-Za-z0-9._@-]{0,159}$`, used verbatim). Never share it with another session: a second live session presenting it is refused.
 - Claim before you write: `crumb claim <you> . <path-or-dir> "<intent>" <ttl>`. A directory lease covers everything below it; a claim that overlaps another agent's lease (same path, an ancestor or a descendant) exits 2. Note the `generation <N>` it prints.
-- `crumb check <you> . <path> [--generation N]` answers `HELD ... generation <N> expires <time>` (exit 0) or `REFUSED absent|expired|held-by <who>|generation <have>!=<want> ...` (exit 2). Exit 1, 3 or 4 mean the store itself is broken or misconfigured: stop and report it; do not work around it.
+- `crumb check <you> . <path> [--generation N] [--key K]` answers `HELD ... generation <N> expires <time>` (exit 0) or `REFUSED absent|expired|held-by <who>|key <have>!=<want>|generation <have>!=<want> ...` (exit 2). A re-check passes both `--key` and `--generation` from the HELD line. Exit 1, 3 or 4 mean the store itself is broken or misconfigured: stop and report it; do not work around it.
 - Renew (claim again) before `expires`; a renewal keeps the generation, a lapsed lease does not.
 
 Onboarding a repository (once per shared root, then once per clone), which is also the migration rule from a layout-1 store (old leases are not carried over; close them in the old store):
