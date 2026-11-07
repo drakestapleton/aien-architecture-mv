@@ -23,5 +23,12 @@ mut perms-byte 's/^ret eq get mp add i 3 120$/ret eq get mp add i 2 120/'
 mut vaddr-as-offset 's/^ret add p64 add b 8 sub v va$/ret v/'
 mut no-gnu-phdr 's/^if ge t 1685382480$/if ge t 1685382484/'
 mut no-comment-scan 's/^r = comment b$/r = ulong 0/'
+mut no-path-escape 's/^if esc$/if false/'
+mut needed-ctl-ok 's/^if ctlb c$/if false/'
+mut needed-comma-ok 's/^if eq c 44$/if false/'
+mut interp-ctl-ok 's/^if ctlb get ib i$/if false/'
+mut del-not-ctl 's/^ret eq c 127$/ret false/'
+mut load-unchecked 's/^if not inrange p64 add b 8 p64 add b 32$/if false/'
+mut nonregular-ok 's/^if ne and m 61440 32768$/if false/'
 echo "MUTANTS killed=$killed survived=$survived"
 [ "$survived" -eq 0 ]

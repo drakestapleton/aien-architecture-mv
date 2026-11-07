@@ -114,9 +114,9 @@ An `ELF` row is `ELF path class machine type link interp needed producer verdict
 
 | Field | Values |
 | --- | --- |
-| class | `ELF64LE`; `UNSUPPORTED` (32-bit or big-endian); `MALFORMED` (a header, program-header, dynamic or section field points outside the file or breaks a rule); `NOT_ELF`; `UNREADABLE` |
+| class | `ELF64LE`; `UNSUPPORTED` (32-bit or big-endian); `MALFORMED` (a header, program-header, `PT_LOAD`, dynamic or section field points outside the file or breaks a rule, or `PT_INTERP` or a `DT_NEEDED` name holds a control byte (below 0x20, or 0x7f), or a `DT_NEEDED` name holds a comma); `NOT_ELF`; `UNREADABLE` (cannot be opened, or not a regular file: a FIFO, directory, device or socket; files are opened without blocking) |
 | link | `static` (no `PT_INTERP`, no `PT_DYNAMIC`), `dynamic` (`PT_INTERP`), `static-pie` (`PT_DYNAMIC` only) |
-| needed | the `DT_NEEDED` sonames in order, read through `DT_STRTAB` mapped by `PT_LOAD` |
+| needed | the `DT_NEEDED` sonames in order, comma separated, read through `DT_STRTAB` mapped by `PT_LOAD` |
 | producer | toolchain marks joined by `+`, or `none`: `gcc`, `clang`, `rustc`, `lld` (`.comment`), `go` (`.go.buildinfo`, `.note.go.buildid`), `gnu` (`PT_GNU_*` headers, `.gnu.*`/`.note.gnu.*` sections), `crt` (`.note.ABI-tag`), `note` (`PT_NOTE`) |
 | verdict | `FOREIGN` when any mark is present or the file links dynamically; `UNMARKED` when an `ELF64LE` file has neither; `UNKNOWN` for every other class |
 
@@ -125,32 +125,55 @@ property of the bytes, not proof that the file came from Omega source; binding a
 binary to its `.om` source still needs a rebuild or a receipt. Stripped distribution binaries
 lose `.comment` but keep their GNU notes and headers, so they still come out `FOREIGN`.
 
+Rows are tab-separated and newline-terminated, and the files they describe are not trusted. The
+path of an `ELF` row, the exe link target of a `PROC` row and the path of a `MAP` row are written
+with every control byte (below 0x20, or 0x7f) and every backslash as `\xHH` (lowercase hex), so a
+file name can neither end a row nor add a field. Interpreter and soname bytes are never escaped:
+a file whose interpreter or `DT_NEEDED` names hold such bytes is `MALFORMED` instead.
+
 A `PROC` row is `PROC pid owner exe ...` followed by the same fields, classified by reading
 `PROCROOT/pid/exe`, the running image (also when the file on disk was replaced or deleted);
-`owner` is `self` for the scanning uid, else the uid. `MAP pid path` rows list the distinct files of
-the process's executable mappings from `PROCROOT/pid/maps`. A missing exe link (kernel threads,
-exited processes) is counted under `# NOEXE`; any other link error gives an `UNREADABLE` row, which
-is what another user's processes give an unprivileged scanner. Capacities: 64 program headers,
-1024 sections, a 64 KiB section-name table, the first 512 dynamic entries, sonames up to 255
-bytes, the first 4 KiB of `.comment`, 960 KiB of maps per process (`# MAPTRUNC`).
+`owner` is `self` for the scanning uid, else the uid. `MAP pid path` rows list the files of the
+process's executable mappings from `PROCROOT/pid/maps`, dropping a path equal to the one on the
+`MAP` row just before it (consecutive duplicates; a path that comes back later is listed again).
+A missing exe link (kernel threads, exited processes) is counted under `# NOEXE`; any other link
+error gives an `UNREADABLE` row, which is what another user's processes give an unprivileged
+scanner. Capacities: 64 program headers, 1024 sections, a 64 KiB section-name table, the first
+512 dynamic entries, sonames up to 255 bytes, the first 4 KiB of `.comment`, 960 KiB of maps per
+process (`# MAPTRUNC`), and a `PROCROOT` of at most 4027 bytes (a longer one is refused with exit
+64, since PROCROOT, a pid and `/maps` must fit one 4096-byte path).
 
 Gate stage (in `gate.om`, observations `elfgen_exit`, `elf_scan_exit`, `proc_scan_exit`,
-`expect_elf_exit`, `expect_proc_exit`, `cross_expect_refused`): `fixtures/elfgen.om` writes 16
+`expect_elf_exit`, `expect_proc_exit`, `cross_expect_refused`): `fixtures/elfgen.om` writes 22
 synthetic ELF images (each one property: GNU/clang/rustc/Go marks, a dynamic file without marks,
 static and static-PIE, a `PT_GNU_STACK`-only image, a bare `PT_LOAD`-only image, six malformed,
-two unsupported (32-bit, big-endian) and one non-ELF file);
-`elfclose` must print exactly `fixtures/elf.expected` for them, for `build/closure` (real omc
-output, `UNMARKED`) and for a missing path; `fixtures/proc` is a fake process tree (exe links into
-the generated fixtures, a maps file with repeated, non-executable, anonymous, `[vdso]` and
-space-containing paths, a pid without an exe link and a non-numeric entry) that must give exactly
+two unsupported (32-bit, big-endian), one non-ELF file, and six hostile-string images: a soname
+holding a newline and a tab that would forge a row, a soname with a comma, a tab and a DEL in
+`PT_INTERP`, a `PT_LOAD` whose file offset wraps past 2^64 onto the real string table, and a clean
+image whose file name holds a tab and a backslash); `elfclose` must print exactly
+`fixtures/elf.expected` for them, for `build/closure` (real omc output, `UNMARKED`), for a missing
+path and for the directory `build/elf` (`UNREADABLE`); `fixtures/proc` is a fake process tree
+(exe links into the generated fixtures, a maps file with repeated, non-executable, anonymous,
+`[vdso]`, space-containing and tab-and-backslash-containing paths, an exe link whose target holds
+a tab and a backslash, a pid without an exe link and a non-numeric entry) that must give exactly
 `fixtures/proc.expected`; and judging the process report against the ELF expectations must be
-refused. `sh fixtures/elf-mutants.sh "$PWD" OMC DIR` applies eight one-line mutants to
-`elfclose.om` (no `DT_NEEDED`, dynamic not foreign, no class check, no map dedupe, wrong perms byte,
-virtual address used as file offset, no `PT_GNU_*`, no `.comment` scan); the gate must exit 1 for
-each. Observed 2026-11-07 on the Spark host with omc `734f0a39`: gate exit 0, mutants 8/8 killed,
-and on 438 ELF files from the host (`/usr/bin`, `/usr/lib`, cargo, three omc builds) the `needed`,
-`interp` and `type` fields equal binutils `readelf` for every file (independent oracle, not part of
-the gate).
+refused. That last judgment is meant to fail, so a passing gate prints one
+`expect: missing line: ...` line on stderr; it is the refusal the gate requires
+(`cross_expect_refused 1`), not a failure. `sh fixtures/elf-mutants.sh "$PWD" OMC DIR` applies 15
+one-line mutants to `elfclose.om` (no `DT_NEEDED`, dynamic not foreign, no class check, no map
+dedupe, wrong perms byte, virtual address used as file offset, no `PT_GNU_*`, no `.comment` scan,
+no output escaping, control bytes or a comma accepted in a soname, control bytes accepted in
+`PT_INTERP`, DEL not a control byte, `PT_LOAD` range unchecked, non-regular files opened); the
+gate must exit 1 for each. Observed 2026-11-07 on the Spark host with omc `734f0a39`: gate exit
+0 with all 13 observations as the manifest expects, and the 15 mutants all killed. On 523 host files
+(`/usr/bin`, `/usr/lib`, cargo, three omc builds) this version prints the same row as the one
+before the hostile-string rules (`9026b0e8`), and for the 435 of them that are `ELF64LE` the
+`needed`, `interp` and `type` fields equal binutils `readelf` (independent oracle, not part of the
+gate). A fuzz harness (outside the gate) over 1,500 mutants of the 16 base fixtures, `build/closure`
+and three host binaries (`true`, `ls`, `libm.so.6`),
+including control bytes, commas and backslashes written into sonames and interpreter paths, gave no
+trap, no non-zero exit and one well-formed row per file; the previous version gave 56 malformed
+rows on the same inputs.
 
 `portfolio.sh LIST OUT ZLBUILD` fetches each `NAME SHA` of LIST from aien-dev at exactly that
 commit (depth 1), runs `closure` over it and `elfclose` over every file closure calls `ELF`, and

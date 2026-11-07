@@ -9,7 +9,7 @@ note item 2), prints AIEN-OBS lines. Exit 0 only when every expectation holds;
 note 3 when OMC is missing or does not match the pin (NOT_RUN); 1 otherwise.
 note gate.sh authenticates the compiler independently before compiling this native fixture gate.
 
-text tbl "closure.om\nexpect.om\nsha256.om\nbuild/closure\nbuild/expect\nbuild/sha256\nfixtures/tree\nrelease\nfixtures/manifest.txt\nfixtures/clean\nfixtures/clean-manifest.txt\nfixtures/tree.expected\nfixtures/clean.expected\nbuild/tree.out\nbuild/clean.out\nbuild/clean2.out\nbuild/omc.sha\nbuild/closure.sha\nomega.pin\nbuild\nfixtures/io-build.om\nbuild/io-build\nbuild/io-errors.om\nbuild/io-errors\nfixtures/clean/src\nread-error\ndirectory-error\nbuild/read-error.out\nbuild/directory-error.out\nelfclose.om\nbuild/elfclose\nfixtures/elfgen.om\nbuild/elfgen\nbuild/elf\nelf\nproc\nfixtures/proc\nbuild/elf.out\nbuild/proc.out\nfixtures/elf.expected\nfixtures/proc.expected\nbuild/elf/dyn-gcc\nbuild/elf/dyn-nomark\nbuild/elf/badneed\nbuild/elf/need-nostr\nbuild/elf/strtab-unmapped\nbuild/elf/bad-shstrndx\nbuild/elf/static-rust\nbuild/elf/clang-lld\nbuild/elf/static-pie-go\nbuild/elf/bare\nbuild/elf/gnu-phdr\nbuild/elf/trunc\nbuild/elf/badph\nbuild/elf/elf32\nbuild/elf/bigend\nbuild/elf/notelf\nbuild/elf/absent\n"
+text tbl "closure.om\nexpect.om\nsha256.om\nbuild/closure\nbuild/expect\nbuild/sha256\nfixtures/tree\nrelease\nfixtures/manifest.txt\nfixtures/clean\nfixtures/clean-manifest.txt\nfixtures/tree.expected\nfixtures/clean.expected\nbuild/tree.out\nbuild/clean.out\nbuild/clean2.out\nbuild/omc.sha\nbuild/closure.sha\nomega.pin\nbuild\nfixtures/io-build.om\nbuild/io-build\nbuild/io-errors.om\nbuild/io-errors\nfixtures/clean/src\nread-error\ndirectory-error\nbuild/read-error.out\nbuild/directory-error.out\nelfclose.om\nbuild/elfclose\nfixtures/elfgen.om\nbuild/elfgen\nbuild/elf\nelf\nproc\nfixtures/proc\nbuild/elf.out\nbuild/proc.out\nfixtures/elf.expected\nfixtures/proc.expected\nbuild/elf/dyn-gcc\nbuild/elf/dyn-nomark\nbuild/elf/badneed\nbuild/elf/need-nostr\nbuild/elf/strtab-unmapped\nbuild/elf/bad-shstrndx\nbuild/elf/static-rust\nbuild/elf/clang-lld\nbuild/elf/static-pie-go\nbuild/elf/bare\nbuild/elf/gnu-phdr\nbuild/elf/trunc\nbuild/elf/badph\nbuild/elf/elf32\nbuild/elf/bigend\nbuild/elf/notelf\nbuild/elf/absent\nbuild/elf/need-inject\nbuild/elf/need-comma\nbuild/elf/interp-tab\nbuild/elf/interp-del\nbuild/elf/load-wrap\nbuild/elf/esc\tname\\x\n"
 text tobs "AIEN-OBS "
 text tcls "closure_sha256 \""
 text tq "\"\n"
@@ -343,7 +343,9 @@ noio
 ret run
 end
 
-note elfclose elf over the 16 generated fixtures, build/closure (real omc output) and a missing path
+note elfclose elf over the 16 base fixtures, build/closure (real omc output), a missing path, the 6
+note hostile-string fixtures (control bytes, a comma, a wrapping PT_LOAD, a tab in the file name)
+note and the directory build/elf (not a regular file: UNREADABLE)
 fn elfscan to long
 pk0
 pkt 30
@@ -353,6 +355,10 @@ pkt add 41 i
 end
 pkt 3
 pkt 57
+for j ulong 6
+pkt add 58 j
+end
+pkt 33
 put finl 0 0
 setout 37
 ret run

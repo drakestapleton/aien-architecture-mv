@@ -5,8 +5,10 @@ note usage: elfclose elf PATH...       one row per file
 note        elfclose proc [PROCROOT]   every process under PROCROOT (default /proc)
 note An ELF row is  ELF path class machine type link interp needed producer verdict  (tabs).
 note class   ELF64LE, or UNSUPPORTED (32-bit or big-endian), MALFORMED (a header, program
-note         header, dynamic or section field points outside the file or breaks a rule),
-note         NOT_ELF, UNREADABLE.
+note         header, PT_LOAD, dynamic or section field points outside the file or breaks a rule,
+note         or the interpreter or a DT_NEEDED name holds a control byte (below 0x20, 0x7f),
+note         or a DT_NEEDED name holds a comma), NOT_ELF, UNREADABLE (cannot be opened, or not
+note         a regular file: FIFO, directory, device, socket; opened without blocking).
 note link    static (no PT_INTERP, no PT_DYNAMIC), dynamic (PT_INTERP), static-pie
 note         (PT_DYNAMIC without PT_INTERP).
 note needed  the DT_NEEDED names, comma separated, read through DT_STRTAB mapped by PT_LOAD.
@@ -19,9 +21,12 @@ note         omc output: PT_LOAD only, no sections; that is not proof of its sou
 note         UNKNOWN for every other class.
 note A process row is  PROC pid owner exe-link-target class ... verdict, classified by reading
 note PROCROOT/pid/exe (the running image); owner is self when PROCROOT/pid belongs to the
-note scanning uid, else that uid. MAP pid path rows list the distinct file paths of its
-note executable mappings in PROCROOT/pid/maps. Processes whose exe link does not exist
+note scanning uid, else that uid. MAP pid path rows list the file paths of its executable
+note mappings in PROCROOT/pid/maps, dropping a path equal to the one on the MAP row just before
+note (consecutive duplicates), not every repeat. Processes whose exe link does not exist
 note (kernel threads, exited) are counted as NOEXE; other link errors give an UNREADABLE row.
+note Paths, exe link targets and MAP paths are written with every control byte and backslash
+note as \xHH, so no file name can end a row or add a field. PROCROOT is at most 4027 bytes.
 note Capacities: 64 program headers, 1024 sections, a 64 KiB section-name table, the first 512
 note dynamic entries and sonames up to 255 bytes; beyond them a file is MALFORMED (dynamic
 note entries past 512 are not read). Only the first 4 KiB of .comment is searched.
@@ -248,6 +253,65 @@ fn wnl to void
 r = write 1 tnl 0 1
 end
 
+note byte i of buffer k (0 path, 1 lnk, 2 mp): a global is never an argument
+fn ebyte k ulong i ulong to uchar
+if eq k 0
+ret get path i
+end
+if eq k 1
+ret get lnk i
+end
+ret get mp i
+end
+
+fn wrun k ulong s ulong n ulong to void
+if eq n 0
+ret
+end
+if eq k 0
+r = write 1 path s n
+ret
+end
+if eq k 1
+r = write 1 lnk s n
+ret
+end
+r = write 1 mp s n
+end
+
+fn hexd v uchar to uchar
+if lt v 10
+ret add v 48
+end
+ret add v 87
+end
+
+note write buffer k bytes [o, o+n) into a report row: a control byte or a backslash is written as
+note \xHH (two lowercase hex digits), so a path or link target can never end a row or add a field
+fn wesc k ulong o ulong n ulong to void
+s = o
+e = add o n
+i = o
+while lt i e bound 983041
+c = ebyte k i
+esc = ctlb c
+if eq c 92
+esc = true
+end
+if esc
+wrun k s sub i s
+put nb 0 92
+put nb 1 120
+put nb 2 hexd shr c 4
+put nb 3 hexd and c 15
+r = write 1 nb 0 4
+s = add i 1
+end
+i = add i 1
+end
+wrun k s sub e s
+end
+
 fn wtab to void
 r = write 1 ttab 0 1
 end
@@ -309,8 +373,22 @@ end
 if eq n 0
 ret 2
 end
+for i ulong n
+if ctlb get ib i
+ret 2
+end
+end
 put ibn 0 n
 ret 0
+end
+
+note a control byte (below 0x20, or 0x7f): never valid in an interpreter path or a soname, and
+note never written raw into a report row (it could end the row or forge a field)
+fn ctlb c uchar to bool
+if lt c 32
+ret true
+end
+ret eq c 127
 end
 
 note file offset of virtual address v through the PT_LOAD headers, or 2^64-1 when unmapped
@@ -336,6 +414,12 @@ put pv 1 0
 for i ulong pn
 b = mul i 56
 t = p32 b
+if eq t 1
+note a PT_LOAD whose file bytes leave the file is MALFORMED, so vtoo never wraps an offset
+if not inrange p64 add b 8 p64 add b 32
+ret 2
+end
+end
 if eq t 3
 if eq get pv 0 1
 ret 2
@@ -389,6 +473,15 @@ ret 2
 end
 if eq n 0
 ret 2
+end
+for i ulong n
+c = get st i
+if ctlb c
+ret 2
+end
+if eq c 44
+ret 2
+end
 end
 m = get ndn 0
 if gt add add m n 1 8192
@@ -736,8 +829,20 @@ put res 4 0
 put ndn 0 0
 put ibn 0 0
 put ssn 0 0
-fd = fopen path 0 get pthn 0 0 0
+note open without blocking (a FIFO would block a plain open) and accept only a regular file:
+note anything else (FIFO, directory, device, socket) is UNREADABLE
+fd = fopen path 0 get pthn 0 2048 0
 if lt fd 0
+ret
+end
+s = fstat int fd stb 0 128
+if lt s 0
+r = fclose int fd
+ret
+end
+m = or ulong get stb 16 shl ulong get stb 17 8
+if ne and m 61440 32768
+r = fclose int fd
 ret
 end
 put fdg 0 fd
@@ -854,7 +959,7 @@ if gt n 0
 put pthn 0 ulong n
 classify
 r = write 1 trELF 0 len trELF
-r = write 1 path 0 ulong n
+wesc 0 0 ulong n
 wtab
 wtail
 put cnt 0 add get cnt 0 1
@@ -950,7 +1055,7 @@ put prvn 0 n
 r = write 1 trMAP 0 len trMAP
 wpid
 wtab
-r = write 1 mp i n
+wesc 2 i n
 wnl
 put cnt 5 add get cnt 5 1
 end
@@ -1045,7 +1150,7 @@ put res 0 4
 wtail
 ret
 end
-r = write 1 lnk 0 ulong k
+wesc 1 0 ulong k
 wtab
 classify
 wtail
@@ -1183,6 +1288,11 @@ if ne get root sub ulong n 1 47
 break
 end
 n = sub n 1
+end
+note PROCROOT + / + a pid of up to 63 digits + /maps must fit the 4096-byte path buffer
+if gt n 4027
+r = write 2 tuse 0 len tuse
+ret 64
 end
 put rootn 0 ulong n
 procmode

@@ -4,7 +4,7 @@ note usage: elfgen DIR    (DIR must exist; writes the files named in tnm, 1024 b
 note Each file is a little ELF64 image with one property under test; see fixtures/elf.expected
 note for the row elfclose must print for each. None of them is executable code.
 
-text tnm "dyn-gcc\ndyn-nomark\nbadneed\nneed-nostr\nstrtab-unmapped\nbad-shstrndx\nstatic-rust\nclang-lld\nstatic-pie-go\nbare\ngnu-phdr\ntrunc\nbadph\nelf32\nbigend\nnotelf\n"
+text tnm "dyn-gcc\ndyn-nomark\nbadneed\nneed-nostr\nstrtab-unmapped\nbad-shstrndx\nstatic-rust\nclang-lld\nstatic-pie-go\nbare\ngnu-phdr\ntrunc\nbadph\nelf32\nbigend\nnotelf\nneed-inject\nneed-comma\ninterp-tab\ninterp-del\nload-wrap\nesc\tname\\x\n"
 text tsr "/lib/ld-linux-aarch64.so.1\nlibc.so.6\nlibm.so.6\nGCC: (Ubuntu 13.2.0) 13.2.0\nrustc version 1.98.1\nclang version 18.1.3\nLinker: LLD 18.1.3\n.comment\n.shstrtab\n.go.buildinfo\n#!/bin/sh\n"
 text tuse "usage: elfgen DIR\n"
 
@@ -274,6 +274,51 @@ clr
 a = wstr 0 10
 put ob a 10
 if not save 15 add a 1
+ok = false
+end
+note need-inject: dyn-gcc with its first DT_NEEDED name "libc.so.6" replaced by the 9 bytes
+note x, newline, E, L, F, tab, /, o, k: written raw it would end the row and forge an ELF row
+dyngcc
+put ob 625 120
+put ob 626 10
+put ob 627 69
+put ob 628 76
+put ob 629 70
+put ob 630 9
+put ob 631 47
+put ob 632 111
+put ob 633 107
+if not save 16 1024
+ok = false
+end
+note need-comma: "libc,so.6" would split into two names in the comma-separated field
+dyngcc
+put ob 629 44
+if not save 17 1024
+ok = false
+end
+note interp-tab and interp-del: a tab or a DEL inside the PT_INTERP path
+dyngcc
+put ob 516 9
+if not save 18 1024
+ok = false
+end
+dyngcc
+put ob 516 127
+if not save 19 1024
+ok = false
+end
+note load-wrap: the PT_LOAD file offset is 2^64-4096 and DT_STRTAB is 4720 past its vaddr, so
+note offset + (v - vaddr) wraps to 624, the real strtab; the PT_LOAD itself leaves the file
+dyngcc
+phd 1 1 sub ulong 0 4096 65536 8192
+dyn 2 5 70256
+if not save 20 1024
+ok = false
+end
+note esc<TAB>name\x: a clean ELF whose file name holds a tab and a backslash
+bare
+if not save 21 1024
 ok = false
 end
 if not ok

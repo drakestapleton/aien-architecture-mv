@@ -39,7 +39,7 @@ shipped or run.
 ## Owners: reconciling the #300 ledger with this snapshot (`owners.tsv`)
 
 #300 (2026-10-23/24) bound migration work to 18 owner issues across 15 public repositories here
-(plus omega-programs, private, and drakestapleton.com in aien-spark, outside this set). Against the
+(plus one private repository and one site that lives outside this set). Against the
 63 active scanned repositories:
 
 | Group | Repos | OUTSTANDING rows |
@@ -84,13 +84,19 @@ in CUDApp evidence, and this tool's own hostile fixtures.
 
 ## Running processes (`process-spark.tsv`)
 
-`procsnap.sh` at 2026-11-07T03:42Z: 686 processes; 416 belong to other users and read as
-`UNREADABLE` to an unprivileged scanner (NOT_RUN for them: root or per-user scans are needed);
-of the scanning account's 270, 221 are `FOREIGN` (shells, Python, Node, agent tools, Rust and C
-builds), 33 `UNMARKED` (omc-built: omega-mcp, ollm, omega-node, omega-tool-model servers and this
-scanner) and 16 unreadable (other namespaces). The `EXE` rows list the account's executables
-outside the OS and agent-tool directories with the sha256 of the running image. A process row
-identifies the bytes running; tying them to a source commit needs a rebuild or a receipt.
+`procsnap.sh` at 2026-11-07T03:43Z (the header line of `process-spark.tsv`): 686 numeric entries
+under `/proc`. 6 had no exe link (`# NOEXE`: kernel threads or processes that exited during the
+scan) and 680 gave a `PROC` row. 413 of them belong to other users and read as `UNREADABLE` to an
+unprivileged scanner (NOT_RUN for them: root or per-user scans are needed); of the scanning
+account's 267, 219 are `FOREIGN` (shells, Python, Node, agent tools, Rust and C builds), 32
+`UNMARKED` (omc-built: omega-mcp, ollm, omega-node, omega-tool-model servers and this scanner) and
+16 unreadable (other namespaces); 413 + 219 + 32 + 16 = 680 (the `COUNT` rows). The `EXE` rows list
+the account's executables outside the OS and agent-tool directories, by their last two path parts
+only (no home directory, full path or command line), with the sha256 of the running image. A
+process row identifies the bytes running; tying them to a source commit needs a rebuild or a
+receipt. This snapshot was taken with elfclose `9026b0e8` (branch head `f363d1a2`), before the
+fixes of the next commit (control-byte escaping, the new `MALFORMED` rules, the regular-file
+check); it was not retaken with the fixed tool.
 
 ## Not run here
 

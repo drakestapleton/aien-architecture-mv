@@ -16,10 +16,17 @@ ELF	build/elf/bigend	UNSUPPORTED	-	-	-	-	-	-	UNKNOWN
 ELF	build/elf/notelf	NOT_ELF	-	-	-	-	-	-	UNKNOWN
 ELF	build/closure	ELF64LE	aarch64	exec	static	-	-	none	UNMARKED
 ELF	build/elf/absent	UNREADABLE	-	-	-	-	-	-	UNKNOWN
-# ELF 18
+ELF	build/elf/need-inject	MALFORMED	-	-	-	-	-	-	UNKNOWN
+ELF	build/elf/need-comma	MALFORMED	-	-	-	-	-	-	UNKNOWN
+ELF	build/elf/interp-tab	MALFORMED	-	-	-	-	-	-	UNKNOWN
+ELF	build/elf/interp-del	MALFORMED	-	-	-	-	-	-	UNKNOWN
+ELF	build/elf/load-wrap	MALFORMED	-	-	-	-	-	-	UNKNOWN
+ELF	build/elf/esc\x09name\x5cx	ELF64LE	aarch64	exec	static	-	-	none	UNMARKED
+ELF	build/elf	UNREADABLE	-	-	-	-	-	-	UNKNOWN
+# ELF 25
 # FOREIGN 6
-# UNMARKED 2
-# UNKNOWN 10
+# UNMARKED 3
+# UNKNOWN 16
 # PROC 0
 # MAP 0
 # NOEXE 0

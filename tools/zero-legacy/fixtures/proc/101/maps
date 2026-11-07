@@ -6,3 +6,4 @@ ffff80100000-ffff80200000 r-xp 00100000 103:02 99                        /usr/li
 ffff80300000-ffff80301000 rw-p 00000000 00:00 0 
 ffff80400000-ffff80401000 r-xp 00000000 00:00 0                          [vdso]
 ffff80500000-ffff80501000 r-xp 00000000 103:02 77                        /opt/with space/lib.so (deleted)
+ffff80600000-ffff80601000 r-xp 00000000 103:02 78                        /opt/tab	here\lib.so

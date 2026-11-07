@@ -4,11 +4,13 @@ MAP	101	/usr/lib/aarch64-linux-gnu/libc.so.6
 MAP	101	/opt/with space/lib.so (deleted)
 PROC	303	self	../../../build/closure	ELF64LE	aarch64	exec	static	-	-	none	UNMARKED
 MAP	303	/x/omc-built
+MAP	101	/opt/tab\x09here\x5clib.so
+PROC	404	self	no\x09where\x5cexe	UNREADABLE	-	-	-	-	-	-	UNKNOWN
 # ELF 0
 # FOREIGN 1
 # UNMARKED 1
-# UNKNOWN 0
-# PROC 2
-# MAP 4
+# UNKNOWN 1
+# PROC 3
+# MAP 5
 # NOEXE 1
 # MAPTRUNC 0
