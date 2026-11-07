@@ -28,7 +28,7 @@ In a repository with `git config crumb.enforce true` (or `CRUMB_ENFORCE=1`) the 
 Onboarding a repository (once per shared root, then once per clone), which is also the migration rule from a layout-1 store (old leases are not carried over; close them in the old store):
 ```
 git config crumb.coordinationRoot /abs/shared/root      # the same absolute directory in every clone
-crumb store-init .                                       # first clone only: layout 2 (refused if the root holds old flat records)
+crumb store-init .                                       # first clone only: layout 2 (refused unless old flat record dirs are provably empty)
 git config crumb.storeId "$(crumb store-id .)"           # every clone
 git config crumb.repoId <owner>/<repo>                   # only if origin is not host/<owner>/<repo>
 git config crumb.enforce true                            # every clone

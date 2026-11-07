@@ -505,5 +505,41 @@ r "$NR" env GIT_DIR="$T/not a git repository (or any of the parent directories)"
 r "$NR" env CRUMB_ENFORCE=1 "$C" claim bob . y.c y 600
 [ $RC -eq 1 ] && herr ENFORCE_NO_REPOSITORY && ok "N28 control: a genuine non-repository under enforcement is still ENFORCE_NO_REPOSITORY" || { why; bad "N28 non-repo enforced"; }
 
+# ---- N29 (review B8) store-init proves the layout-1 record directories empty whatever the enforcement mode ----
+# A layout-1 root with alice's flat lease on src/a.c (dirs/src.json, agents/alice.json); each case hides the records
+# from a permissive scan. Refusal: exit 1, no LAYOUT; after the hiding is undone the records are byte-identical and
+# the lease still blocks bob.
+v1() {   # v1 <name>: sets V (repo), W (its layout-1 root), w0 (record checksums)
+  V="$T/b8-$1"; W="$T/b8-$1-root"; mkrepo "$V" "https://github.com/acme/b8-$1.git"; git -C "$V" config crumb.coordinationRoot "$W"
+  (cd "$V" && "$C" claim alice . src/a.c "flat lease" 600 >/dev/null 2>&1); w0=$(sum "$W/dirs"; sum "$W/agents")
+}
+b8() {   # b8 <label>: the refused init leaves no LAYOUT; once restored, the records are intact and still block bob
+  [ $RC -eq 1 ] && herr 'STORE_LAYOUT_V1_(UNPROVEN|DATA)' && [ ! -e "$W/LAYOUT" ] && ok "N29 $1: store-init exit 1, no LAYOUT" || { why; bad "N29 $1 refused"; }
+}
+b8after() {
+  r "$V" "$C" claim bob . src/a.c x
+  [ "$(sum "$W/dirs"; sum "$W/agents")" = "$w0" ] && [ $RC -eq 2 ] && [ ! -e "$W/LAYOUT" ] && ok "N29 $1: records byte-identical after restore, alice's lease still blocks bob (exit 2)" || { why; bad "N29 $1 intact"; }
+}
+if [ "$(id -u)" -eq 0 ]; then echo "NOT_RUN N29 permission cases (root bypasses mode bits)"; else
+  v1 unread; chmod 000 "$W/dirs" "$W/agents"; r "$V" "$C" store-init .
+  b8 "unreadable dirs/ and agents/"; chmod 755 "$W/dirs" "$W/agents"; b8after "unreadable dirs/ and agents/"
+  v1 subread; mkdir "$W/dirs/sub"; mv "$W/dirs/src.json" "$W/agents/alice.json" "$W/dirs/sub/"; chmod 300 "$W/dirs/sub"; r "$V" "$C" store-init .
+  b8 "records in an unreadable descendant directory"; chmod 755 "$W/dirs/sub"; mv "$W/dirs/sub/src.json" "$W/dirs/"; mv "$W/dirs/sub/alice.json" "$W/agents/"; rmdir "$W/dirs/sub"
+  b8after "records in an unreadable descendant directory"
+fi
+v1 link; mkdir "$T/b8-away"; mv "$W/dirs/src.json" "$W/agents/alice.json" "$T/b8-away/"; ln -s "$T/b8-away" "$W/dirs/hidden"
+r "$V" "$C" store-init .
+b8 "records behind a descendant symlink"; herr 'dirs/hidden is a symbolic link' || { why; bad "N29 link named"; }
+rm "$W/dirs/hidden"; mv "$T/b8-away/src.json" "$W/dirs/"; mv "$T/b8-away/alice.json" "$W/agents/"; b8after "records behind a descendant symlink"
+v1 toplink; mkdir "$T/b8-top"; mv "$W/dirs" "$W/agents" "$T/b8-top/"; ln -s "$T/b8-top/dirs" "$W/dirs"; ln -s "$T/b8-top/agents" "$W/agents"
+r "$V" "$C" store-init .
+b8 "dirs/ and agents/ are symbolic links"; rm "$W/dirs" "$W/agents"; mv "$T/b8-top/dirs" "$T/b8-top/agents" "$W/"; b8after "dirs/ and agents/ are symbolic links"
+v1 stray; echo x > "$W/continuations/partial.tmp"; mv "$W/dirs/src.json" "$W/agents/alice.json" "$T/b8-away/"
+r "$V" "$C" store-init .
+[ $RC -eq 1 ] && herr STORE_LAYOUT_V1_UNPROVEN && [ ! -e "$W/LAYOUT" ] && [ -f "$W/continuations/partial.tmp" ] && ok "N29 a non-record file under continuations/: STORE_LAYOUT_V1_UNPROVEN exit 1, no LAYOUT, file kept" || { why; bad "N29 stray file"; }
+rm "$W/continuations/partial.tmp"; rm -f "$T/b8-away/src.json" "$T/b8-away/alice.json"; mkdir -p "$W/dirs/src/deep"
+r "$V" "$C" store-init .
+[ $RC -eq 0 ] && [ "$(cat "$W/LAYOUT" 2>/dev/null)" = crumb-coord-layout/2 ] && [ ! -e "$W/dirs" ] && [ ! -e "$W/agents" ] && [ ! -e "$W/continuations" ] && [ -d "$W/repos" ] && ok "N29 control: a layout-1 root holding only empty real directories becomes layout 2 (empty trees removed)" || { why; bad "N29 emptied root"; }
+
 echo "namespace/check/enforce: $( [ $fail -eq 0 ] && echo ALL PASS || echo FAILURES )"
 exit $fail

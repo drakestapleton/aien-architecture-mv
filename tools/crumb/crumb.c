@@ -2865,10 +2865,42 @@ static int cmd_store_id(const char *dir) {
     if (!p->id.has_expect) fprintf(stderr, "crumb: coordination store %s is unregistered; register it: git config crumb.storeId %s\n", p->root, hex);
     return 0;
 }
+/* store-init's proof that a layout-1 record directory (dirs/, agents/, continuations/) holds nothing, independent of
+ * enforcement mode (crumb924 B8): absent, or a real directory whose whole tree, walked with lstat, is real (empty)
+ * subdirectories only. Every lstat/open/read failure, symbolic link, record or other file refuses: an inspection
+ * that could not see everything is never taken for an empty store. With rm set (only after every directory has
+ * been proved), the empty tree is removed bottom-up and a failed removal refuses too. */
+static void legacy_empty(const char *root, const char *path, int top, int rm) {
+    struct stat st;
+    if (lstat(path, &st) != 0) {
+        if (top && errno == ENOENT) return;
+        die("STORE_LAYOUT_V1_UNPROVEN: cannot stat %s: %s; refusing to make %s a layout-2 root without proving the layout-1 records empty", path, strerror(errno), root);
+    }
+    if (S_ISLNK(st.st_mode)) die("STORE_LAYOUT_V1_UNPROVEN: %s is a symbolic link; refusing to make %s a layout-2 root (records behind it cannot be proved absent): move it aside", path, root);
+    if (!S_ISDIR(st.st_mode)) {
+        size_t l = strlen(path);
+        if (!top && l > 5 && !strcmp(path + l - 5, ".json")) die("STORE_LAYOUT_V1_DATA: %s is a layout-1 record; refusing to make %s a layout-2 root (their locks would silently vanish): use a new empty root, or close every lease and move dirs/ agents/ continuations/ aside first", path, root);
+        die("STORE_LAYOUT_V1_UNPROVEN: %s is not a directory; refusing to make %s a layout-2 root until it is moved aside", path, root);
+    }
+    DIR *d = opendir(path);
+    if (!d) die("STORE_LAYOUT_V1_UNPROVEN: cannot open directory %s: %s; refusing to make %s a layout-2 root without proving the layout-1 records empty", path, strerror(errno), root);
+    struct dirent *e;
+    for (;;) {
+        errno = 0;
+        if (!(e = readdir(d))) { if (errno) die("STORE_LAYOUT_V1_UNPROVEN: cannot read directory %s: %s; refusing to make %s a layout-2 root without proving the layout-1 records empty", path, strerror(errno), root); break; }
+        if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
+        char *full = pjoin(path, e->d_name);
+        legacy_empty(root, full, 0, rm);
+        free(full);
+    }
+    closedir(d);
+    if (rm && rmdir(path) != 0) die("STORE_LAYOUT_V1_UNPROVEN: cannot remove empty %s: %s; refusing to make %s a layout-2 root", path, strerror(errno), root);
+}
 /* store-init [dir] (crumb924): make the coordination root a layout-2 (repository-namespaced) root, deliberately.
  * Under the root lock: STORE_ID as store-id does (registered: must match, never created); then LAYOUT is published
- * once (link(2), never replaced) and repos/ created. Refused while the root holds flat (layout 1) records, so old
- * locks are never silently dropped or reinterpreted. Idempotent on a layout-2 root. */
+ * once (link(2), never replaced) and repos/ created. Refused unless dirs/ agents/ continuations/ are proved empty
+ * whatever the enforcement mode (legacy_empty), so old locks are never silently dropped or reinterpreted.
+ * Idempotent on a layout-2 root. */
 static int cmd_store_init(const char *dir) {
     Plane *p = plane_find(dir);
     if (!p) die("store-init needs a git repository: %s", dir);
@@ -2879,13 +2911,11 @@ static int cmd_store_init(const char *dir) {
     int created = 0;
     if (read_layout(p->root) != 2) {
         static const char *flat[] = { "dirs", "agents", "continuations", NULL };
-        for (int i = 0; flat[i]; i++) {
-            char *d = pjoin(p->root, flat[i]);
-            if (count_json(d)) die("STORE_LAYOUT_V1_DATA: %s holds layout-1 records; refusing to make %s a layout-2 root (their locks would silently vanish): use a new empty root, or close every lease and move dirs/ agents/ continuations/ aside first", d, p->root);
-            free(d);
-        }
-        static const char *empty[] = { "dirs", "agents", "continuations", "ledger", NULL };
-        for (int i = 0; empty[i]; i++) { char *d = pjoin(p->root, empty[i]); rmdir(d); free(d); }   /* empty ones only */
+        for (int pass = 0; pass < 2; pass++)   /* prove all three first; only then remove the empty trees */
+            for (int i = 0; flat[i]; i++) { char *d = pjoin(p->root, flat[i]); legacy_empty(p->root, d, 1, pass); free(d); }
+        char *ld = pjoin(p->root, "ledger");   /* never holds records; left in place when it is not empty */
+        if (rmdir(ld) != 0 && errno != ENOENT && errno != ENOTEMPTY && errno != EEXIST) die("STORE_LAYOUT_V1_UNPROVEN: cannot remove empty %s: %s; refusing to make %s a layout-2 root", ld, strerror(errno), p->root);
+        free(ld);
         char *lp = pjoin(p->root, LAYOUT_FILE);
         publish_once(p->root, lp, LAYOUT_V2, strlen(LAYOUT_V2));
         free(lp); created = 1;
