@@ -56,6 +56,15 @@ static void die(const char *fmt, ...) {
 static void *xmalloc(size_t n) { void *p = malloc(n ? n : 1); if (!p) die("out of memory"); return p; }
 static void *xrealloc(void *q, size_t n) { void *p = realloc(q, n ? n : 1); if (!p) die("out of memory"); return p; }
 static char *xstrdup(const char *s) { size_t n = strlen(s) + 1; char *p = xmalloc(n); memcpy(p, s, n); return p; }
+/* snprintf into a buffer of exactly size bytes, checked: an encoding error or a result that does not fit is an
+ * internal error (exit 1), never a silently truncated path. Every path the tool formats goes through a bounded write. */
+__attribute__((format(printf, 3, 4)))
+static void xsnprintf(char *dst, size_t size, const char *fmt, ...) {
+    va_list ap; va_start(ap, fmt);
+    int r = vsnprintf(dst, size, fmt, ap);
+    va_end(ap);
+    if (r < 0 || (size_t)r >= size) die("internal error: formatted string does not fit its %zu-byte buffer (format \"%s\")", size, fmt);
+}
 
 /* ---------- growable buffer ---------- */
 typedef struct { char *p; size_t n, cap; } Buf;
@@ -278,7 +287,7 @@ static FILE *fcreate(const char *path, int append) {
 }
 static void spit(const char *path, const char *data) {
     size_t tn = strlen(path) + 32; char *tmp = xmalloc(tn);
-    snprintf(tmp, tn, "%s.tmp%ld", path, (long)getpid());
+    xsnprintf(tmp, tn, "%s.tmp%ld", path, (long)getpid());
     FILE *f = fcreate(tmp, 0);
     if (!f) die("cannot write %s: %s", tmp, strerror(errno));
     if (fputs(data, f) < 0 || fclose(f) != 0) die("write failed: %s", tmp);
@@ -286,7 +295,7 @@ static void spit(const char *path, const char *data) {
 }
 static char *pjoin(const char *a, const char *b) {
     size_t n = strlen(a) + strlen(b) + 2; char *p = xmalloc(n);
-    snprintf(p, n, "%s/%s", a, b); return p;
+    xsnprintf(p, n, "%s/%s", a, b); return p;
 }
 static char *absdir(const char *d) {
     char r[PATH_MAX];
@@ -710,8 +719,8 @@ static int read_marker(const char *store, char hex[33]) {
 static void fsync_dir(const char *dir);
 /* Publish a new store marker file at path: tmp, fsync, link(2) (never replaces an existing file), dir fsync. */
 static void publish_once(const char *dir, const char *path, const char *data, size_t len) {
-    char *tmp = xmalloc(strlen(path) + 32);
-    sprintf(tmp, "%s.tmp%ld", path, (long)getpid());
+    size_t tn = strlen(path) + 32; char *tmp = xmalloc(tn);
+    xsnprintf(tmp, tn, "%s.tmp%ld", path, (long)getpid());
     int fd = create_temp(tmp);
     write_all(fd, data, len, tmp);
     if (fsync(fd) != 0) die("fsync failed: %s", tmp);
@@ -776,7 +785,7 @@ static char *session_id(const char *agent) {
     if (e && *e) return xstrdup(e);
     char h[256]; if (gethostname(h, sizeof h) != 0) strcpy(h, "unknown-host");
     h[sizeof h - 1] = 0;
-    size_t n = strlen(agent) + strlen(h) + 2; char *s = xmalloc(n); snprintf(s, n, "%s@%s", agent, h); return s;
+    size_t n = strlen(agent) + strlen(h) + 2; char *s = xmalloc(n); xsnprintf(s, n, "%s@%s", agent, h); return s;
 }
 
 /* ---------- repository namespaces (store layout 2) and enforcement mode (crumb924) ----------
@@ -874,7 +883,7 @@ static char *root_canon(const char *v, const char *top) {
     if (realpath(j, r)) { free(j); return xstrdup(r); }
     char *n = norm_path(j + 1);
     if (!n) return j;
-    char *a = xmalloc(strlen(n) + 2); sprintf(a, "/%s", n); free(j); free(n);
+    size_t an = strlen(n) + 2; char *a = xmalloc(an); xsnprintf(a, an, "/%s", n); free(j); free(n);
     return a;
 }
 static int bool_word(const char *v, const char *what) {   /* git-style boolean; anything else is refused */
@@ -1073,7 +1082,7 @@ static void durable_write(const char *store, const char *path, const char *data)
     if (lstat(path, &st) == 0 && !S_ISREG(st.st_mode)) die_x(EXIT_REFUSED, "REFUSED_RECORD: %s %s; refusing to replace it (fix or move it aside)", path, kind_of(st.st_mode));
     char *dd = dir_of(path); mkdir_p(dd);
     size_t tn = strlen(path) + 32; char *tmp = xmalloc(tn);
-    snprintf(tmp, tn, "%s.tmp%ld", path, (long)getpid());
+    xsnprintf(tmp, tn, "%s.tmp%ld", path, (long)getpid());
     int fd = create_temp(tmp);
     write_all(fd, data, len, tmp);
     if (fsync(fd) != 0) die("fsync failed: %s", tmp);
@@ -1202,10 +1211,11 @@ static Rec *rec_load(Txn *t, const char *path, int agent, const char *label) {
  * (dir_label). Layout 1 keeps its historical mapping (where `_root` shares the root record) byte for byte. */
 static char *dir_path(const Plane *p, const char *rel) {
     if (!strcmp(rel, ".")) return pjoin(p->store, "dirs/_root.json");
-    char *a = pjoin(p->store, "dirs"), *b = p->layout == 2 && rel[0] == '_' ? xmalloc(strlen(a) + strlen(rel) + 3) : pjoin(a, rel), *c;
-    if (p->layout == 2 && rel[0] == '_') sprintf(b, "%s/_%s", a, rel);
-    c = xmalloc(strlen(b) + 6);
-    sprintf(c, "%s.json", b); free(a); free(b); return c;
+    char *a = pjoin(p->store, "dirs"), *b, *c;
+    if (p->layout == 2 && rel[0] == '_') { size_t bn = strlen(a) + strlen(rel) + 3; b = xmalloc(bn); xsnprintf(b, bn, "%s/_%s", a, rel); }
+    else b = pjoin(a, rel);
+    size_t cn = strlen(b) + 6; c = xmalloc(cn);
+    xsnprintf(c, cn, "%s.json", b); free(a); free(b); return c;
 }
 /* the key directory a record name under dirs/ (without .json) stands for; NULL when no key maps to that name */
 static char *dir_label(const Plane *p, const char *name) {
@@ -1217,8 +1227,8 @@ static Rec *dir_rec(Txn *t, const char *rel) { return rec_load(t, dir_path(t->p,
 static char *agent_path(const Plane *p, const char *agent) {
     char *n = xstrdup(agent);   /* layout 1: legacy sanitising (aliases possible); layout 2: the validated id verbatim */
     if (p->layout != 2) for (char *s = n; *s; s++) if (!((*s >= 'a' && *s <= 'z') || (*s >= 'A' && *s <= 'Z') || (*s >= '0' && *s <= '9') || *s == '.' || *s == '-' || *s == '_')) *s = '_';
-    char *a = pjoin(p->store, "agents"), *b = pjoin(a, n), *c = xmalloc(strlen(b) + 6);
-    sprintf(c, "%s.json", b); return c;
+    char *a = pjoin(p->store, "agents"), *b = pjoin(a, n); size_t cn = strlen(b) + 6; char *c = xmalloc(cn);
+    xsnprintf(c, cn, "%s.json", b); return c;
 }
 static Rec *agent_rec(Txn *t, const char *agent) { return rec_load(t, agent_path(t->p, agent), 1, NULL); }
 /* Record names under dir, recursively, without opening any entry: lstat, so real subdirectories are walked and
@@ -2310,7 +2320,7 @@ static char *cc_path(void) {
     const char *h = getenv("HOME");
     if (!h || !*h) die("HOME is not set; set CRUMB_CC to the path of cc.sh");
     size_t n = strlen(h) + 64; char *s = xmalloc(n);
-    snprintf(s, n, "%s/.claude/skills/checkpoint/scripts/cc.sh", h); return s;
+    xsnprintf(s, n, "%s/.claude/skills/checkpoint/scripts/cc.sh", h); return s;
 }
 static void cc_env(Plane *p) {   /* records must land in <coordination root>/continuations (layout 2: the namespace's) */
     const char *env = getenv("CRUMB_COORD_ROOT");
@@ -2637,7 +2647,7 @@ static int root_on_demand(const char *top) {
 }
 static void write_crumb(const char *full, J *cr) {   /* D9: key-sorted, temp file then rename */
     jsort(cr);
-    char *out = jdump(cr), *tmp = xmalloc(strlen(full) + 32); snprintf(tmp, strlen(full) + 32, "%s.tmp.%ld", full, (long)getpid());
+    char *out = jdump(cr), *tmp = xmalloc(strlen(full) + 32); xsnprintf(tmp, strlen(full) + 32, "%s.tmp.%ld", full, (long)getpid());
     FILE *f = fcreate(tmp, 0); if (!f) die("cannot write %s", tmp);
     if (fputs(out, f) < 0 || fclose(f) != 0) die("write failed: %s", tmp);
     if (rename(tmp, full)) die("rename failed: %s", full);
@@ -2716,7 +2726,7 @@ static int compile_engine(char mode, const char *root, int quiet, int *total_out
             J *x = jget(cr, "extensions"); if (!x || x->t != JOBJ) { x = jnew(JOBJ); jset(cr, "extensions", x); }
             J *g = jclone(nw); jset(g, "generated_at_commit", jstr(head)); jset(g, "compiled_at", jstr(stamp));
             jset(x, "generated", g); jsort(cr);
-            char *out = jdump(cr), *tmp = xmalloc(strlen(full) + 32); snprintf(tmp, strlen(full) + 32, "%s.tmp.%ld", full, (long)getpid());
+            char *out = jdump(cr), *tmp = xmalloc(strlen(full) + 32); xsnprintf(tmp, strlen(full) + 32, "%s.tmp.%ld", full, (long)getpid());
             FILE *f = fcreate(tmp, 0); if (!f) die("cannot write %s", tmp);
             if (fputs(out, f) < 0 || fclose(f) != 0) die("write failed: %s", tmp);
             if (rename(tmp, full)) die("rename failed: %s", full);
