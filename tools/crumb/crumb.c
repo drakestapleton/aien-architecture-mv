@@ -2945,35 +2945,43 @@ static int cmd_store_id(const char *dir) {
     return 0;
 }
 /* store-init's proof that a layout-1 record directory (dirs/, agents/, continuations/) holds nothing, independent of
- * enforcement mode (crumb924 B8): absent, or a real directory whose whole tree, walked with lstat, is real (empty)
- * subdirectories only. Every lstat/open/read failure, symbolic link, record or other file refuses: an inspection
- * that could not see everything is never taken for an empty store. With rm set (only after every directory has
- * been proved), the empty tree is removed bottom-up and a failed removal refuses too. */
-static void legacy_empty(const char *root, const char *path, int top, int rm) {
-    struct stat st;
-    if (lstat(path, &st) != 0) {
-        if (top && errno == ENOENT) return;
-        die("STORE_LAYOUT_V1_UNPROVEN: cannot stat %s: %s; refusing to make %s a layout-2 root without proving the layout-1 records empty", path, strerror(errno), root);
+ * enforcement mode (crumb924 B8): absent, or a real directory whose whole tree is real (empty) subdirectories only.
+ * Every open/read failure, symbolic link, record or other file refuses: an inspection that could not see everything
+ * is never taken for an empty store. With rm set (only after every directory has been proved), the empty tree is
+ * removed bottom-up and a failed removal refuses too (a file added since the proof makes the removal fail: refused).
+ * The walk is descriptor-relative (openat with O_DIRECTORY|O_NOFOLLOW from the parent's descriptor, unlinkat on the
+ * same descriptor), so no name is checked by one call and then used by another (no check-to-use window, CodeQL
+ * cpp/toctou-race-condition). pfd is the parent directory, name the entry in it, shown the path for messages. */
+static void legacy_empty(const char *root, int pfd, const char *name, const char *shown, int top, int rm) {
+    int fd = openat(pfd, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
+    if (fd < 0) {
+        int er = errno;
+        if (top && er == ENOENT) return;
+        /* Linux reports a link to a directory as ENOTDIR under O_DIRECTORY; which refusal to print is decided after the
+         * failed open (every branch here refuses, so the lookup only picks the message) */
+        struct stat st;
+        if (er == ELOOP || (er == ENOTDIR && fstatat(pfd, name, &st, AT_SYMLINK_NOFOLLOW) == 0 && S_ISLNK(st.st_mode)))
+            die("STORE_LAYOUT_V1_UNPROVEN: %s is a symbolic link; refusing to make %s a layout-2 root (records behind it cannot be proved absent): move it aside", shown, root);
+        if (er == ENOTDIR) {
+            size_t l = strlen(name);
+            if (!top && l > 5 && !strcmp(name + l - 5, ".json")) die("STORE_LAYOUT_V1_DATA: %s is a layout-1 record; refusing to make %s a layout-2 root (their locks would silently vanish): use a new empty root, or close every lease and move dirs/ agents/ continuations/ aside first", shown, root);
+            die("STORE_LAYOUT_V1_UNPROVEN: %s is not a directory; refusing to make %s a layout-2 root until it is moved aside", shown, root);
+        }
+        die("STORE_LAYOUT_V1_UNPROVEN: cannot open directory %s: %s; refusing to make %s a layout-2 root without proving the layout-1 records empty", shown, strerror(er), root);
     }
-    if (S_ISLNK(st.st_mode)) die("STORE_LAYOUT_V1_UNPROVEN: %s is a symbolic link; refusing to make %s a layout-2 root (records behind it cannot be proved absent): move it aside", path, root);
-    if (!S_ISDIR(st.st_mode)) {
-        size_t l = strlen(path);
-        if (!top && l > 5 && !strcmp(path + l - 5, ".json")) die("STORE_LAYOUT_V1_DATA: %s is a layout-1 record; refusing to make %s a layout-2 root (their locks would silently vanish): use a new empty root, or close every lease and move dirs/ agents/ continuations/ aside first", path, root);
-        die("STORE_LAYOUT_V1_UNPROVEN: %s is not a directory; refusing to make %s a layout-2 root until it is moved aside", path, root);
-    }
-    DIR *d = opendir(path);
-    if (!d) die("STORE_LAYOUT_V1_UNPROVEN: cannot open directory %s: %s; refusing to make %s a layout-2 root without proving the layout-1 records empty", path, strerror(errno), root);
+    DIR *d = fdopendir(fd);
+    if (!d) { int er = errno; close(fd); die("STORE_LAYOUT_V1_UNPROVEN: cannot open directory %s: %s; refusing to make %s a layout-2 root without proving the layout-1 records empty", shown, strerror(er), root); }
     struct dirent *e;
     for (;;) {
         errno = 0;
-        if (!(e = readdir(d))) { if (errno) die("STORE_LAYOUT_V1_UNPROVEN: cannot read directory %s: %s; refusing to make %s a layout-2 root without proving the layout-1 records empty", path, strerror(errno), root); break; }
+        if (!(e = readdir(d))) { if (errno) die("STORE_LAYOUT_V1_UNPROVEN: cannot read directory %s: %s; refusing to make %s a layout-2 root without proving the layout-1 records empty", shown, strerror(errno), root); break; }
         if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
-        char *full = pjoin(path, e->d_name);
-        legacy_empty(root, full, 0, rm);
+        char *full = pjoin(shown, e->d_name);
+        legacy_empty(root, dirfd(d), e->d_name, full, 0, rm);
         free(full);
     }
     closedir(d);
-    if (rm && rmdir(path) != 0) die("STORE_LAYOUT_V1_UNPROVEN: cannot remove empty %s: %s; refusing to make %s a layout-2 root", path, strerror(errno), root);
+    if (rm && unlinkat(pfd, name, AT_REMOVEDIR) != 0) die("STORE_LAYOUT_V1_UNPROVEN: cannot remove empty %s: %s; refusing to make %s a layout-2 root", shown, strerror(errno), root);
 }
 /* store-init [dir] (crumb924): make the coordination root a layout-2 (repository-namespaced) root, deliberately.
  * Under the root lock: STORE_ID as store-id does (registered: must match, never created); then LAYOUT is published
@@ -2990,11 +2998,13 @@ static int cmd_store_init(const char *dir) {
     int created = 0;
     if (read_layout(p->root) != 2) {
         static const char *flat[] = { "dirs", "agents", "continuations", NULL };
+        int rfd = crumb_open_follow(p->root, O_RDONLY | O_DIRECTORY, 0);   /* the root may be named through a link */
+        if (rfd < 0) die("STORE_LAYOUT_V1_UNPROVEN: cannot open coordination root %s: %s", p->root, strerror(errno));
         for (int pass = 0; pass < 2; pass++)   /* prove all three first; only then remove the empty trees */
-            for (int i = 0; flat[i]; i++) { char *d = pjoin(p->root, flat[i]); legacy_empty(p->root, d, 1, pass); free(d); }
+            for (int i = 0; flat[i]; i++) { char *d = pjoin(p->root, flat[i]); legacy_empty(p->root, rfd, flat[i], d, 1, pass); free(d); }
         char *ld = pjoin(p->root, "ledger");   /* never holds records; left in place when it is not empty */
-        if (rmdir(ld) != 0 && errno != ENOENT && errno != ENOTEMPTY && errno != EEXIST) die("STORE_LAYOUT_V1_UNPROVEN: cannot remove empty %s: %s; refusing to make %s a layout-2 root", ld, strerror(errno), p->root);
-        free(ld);
+        if (unlinkat(rfd, "ledger", AT_REMOVEDIR) != 0 && errno != ENOENT && errno != ENOTEMPTY && errno != EEXIST) die("STORE_LAYOUT_V1_UNPROVEN: cannot remove empty %s: %s; refusing to make %s a layout-2 root", ld, strerror(errno), p->root);
+        free(ld); close(rfd);
         char *lp = pjoin(p->root, LAYOUT_FILE);
         publish_once(p->root, lp, LAYOUT_V2, strlen(LAYOUT_V2));
         free(lp); created = 1;
