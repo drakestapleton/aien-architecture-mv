@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Offline test for rebase-crumb.sh. Real temporary git repos (a bare "origin" plus a worktree whose
-# origin URL looks like an aien-dev URL, redirected to the bare repo with insteadOf) and a fake
-# `crumb` on PATH. No network, no auth.
+# origin URL looks like an aien-dev URL, redirected to the bare repo with insteadOf). Crumb compile and
+# verify are retired (DRA-97): a `crumb` stub that exits 99 is on PATH and in $CRUMB, and the test
+# proves it is never called and no crumb commit is added. No network, no auth.
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"
 script="$here/rebase-crumb.sh"
@@ -11,15 +12,16 @@ export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
 FAKEURL="https://github.com/aien-dev/fake-repo"
 
 mkdir -p "$tmp/bin"
-cat > "$tmp/bin/crumb" <<'S'
+cat > "$tmp/bin/crumb" <<S
 #!/usr/bin/env bash
-case "$1" in
-  compile) echo compiled >> .crumb ;;
-  verify) if [ "${CRUMB_FAIL:-0}" = 1 ]; then echo "crumb verify: FAIL: stale"; exit 1; else echo "crumb verify: OK"; fi ;;
-esac
+# retired: any call is a test failure (recorded, then exit 99)
+echo "\$*" >> "$tmp/crumb-called"
+exit 99
 S
 chmod +x "$tmp/bin/crumb"
-export PATH="$tmp/bin:$PATH"
+export PATH="$tmp/bin:$PATH" CRUMB="$tmp/bin/crumb"
+RETIRED="crumb: retired (DRA-97), conflicting .crumb files keep main's copy; no compile, verify or crumb commit"
+nocrumbcommit() { test "$(git -C "$1" log --format=%s origin/main..HEAD | grep -c '^crumb compile (after rebase onto main)$')" = 0; }
 
 pass=0; bad=0
 ok() { pass=$((pass+1)); }
@@ -67,17 +69,18 @@ expect 2 "non-git directory refused" "$tmp/plain" feat
 # 6 origin branch missing
 mk t6
 expect 2 "missing origin branch refused" "$W" nosuchbranch
-# 7 clean rebase, crumb commit, push
+# 7 clean rebase, push, no crumb commit
 mk t7; advance_main "$tmp/t7/seed" main-only.txt m
 before=$(ohead)
 expect 0 "clean rebase succeeds" "$W" feat
 check "push reached origin" test "$(ohead)" = "$(git -C "$W" rev-parse HEAD)"
 check "origin head moved" test "$(ohead)" != "$before"
-check "last commit is crumb compile" test "$(git -C "$W" log -1 --format=%s)" = "crumb compile (after rebase onto main)"
-check "crumb commit has both trailers" bash -c "git -C '$W' log -1 --format=%B | grep -q 'Co-authored-by: Drake Stapleton <drake@aienos.com>' && git -C '$W' log -1 --format=%B | grep -q 'Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>'"
+check "last commit is the feat source commit" test "$(git -C "$W" log -1 --format=%s)" = "feat"
+check "no crumb compile commit added" nocrumbcommit "$W"
+check "retired crumb notice printed" bash -c 'echo "$1" | grep -qF "$2"' _ "$OUT" "$RETIRED"
 check "main commit is an ancestor" git -C "$W" merge-base --is-ancestor origin/main HEAD
 check "lock removed on exit" test ! -e "$W/.git/rebase-crumb.lock"
-check "final line format" bash -c "echo '$OUT' | tail -1 | grep -q '^rebased feat onto '"
+check "final line format" bash -c 'echo "$1" | tail -1 | grep -q "^rebased feat onto "' _ "$OUT"
 # 8 stale lock (older than 2h) does not block
 mk t8; touch -d '3 hours ago' "$W/.git/rebase-crumb.lock"; advance_main "$tmp/t8/seed" main-only.txt m
 expect 0 "stale lock ignored" "$W" feat
@@ -96,17 +99,19 @@ mk t10
 ( cd "$tmp/t10/w" && echo featcrumb > .crumb && git add -A && git commit -q -m "feat crumb" && git push -q origin feat )
 advance_main "$tmp/t10/seed" .crumb maincrumb
 expect 0 "crumb-only conflict resolved" "$W" feat
-check "main's crumb copy kept, then compiled" test "$(cat "$W/.crumb")" = "$(printf 'maincrumb\ncompiled')"
+check "main's crumb copy kept as is (not compiled)" test "$(cat "$W/.crumb")" = "maincrumb"
 check "feat source change kept" test -f "$W/feat.txt"
-# 11 verify fails: exit 4, no push
+check "t10 no crumb compile commit added" nocrumbcommit "$W"
+# 11 no crumb tool at all (CRUMB points nowhere, PATH stub would exit 99): still exit 0 and pushed
 mk t11; advance_main "$tmp/t11/seed" main-only.txt m; before=$(ohead)
-OUT=$(CRUMB_FAIL=1 "$script" "$W" feat 2>&1); rc=$?
-if [ "$rc" = 4 ]; then ok; else no "verify failure exits 4 (rc=$rc): $OUT"; fi
-check "verify failure pushed nothing" test "$(ohead)" = "$before"
-# 12 repo with no crumbs: step skipped
+OUT=$(CRUMB=/nonexistent/crumb "$script" "$W" feat 2>&1); rc=$?
+if [ "$rc" = 0 ]; then ok; else no "missing crumb tool still rebases and exits 0 (rc=$rc): $OUT"; fi
+check "missing crumb tool: push reached origin" test "$(ohead)" = "$(git -C "$W" rev-parse HEAD)"
+check "missing crumb tool: origin head moved" test "$(ohead)" != "$before"
+# 12 repo with no crumbs: same retired notice, no crumb commit
 mk t12 nocrumb; advance_main "$tmp/t12/seed" main-only.txt m
 expect 0 "no-crumb repo passes" "$W" feat
-check "skip notice printed" bash -c "echo '$OUT' | grep -q 'crumb: no crumbs in repo, step skipped (rule 2 notice)'"
+check "retired notice printed" bash -c 'echo "$1" | grep -qF "$2"' _ "$OUT" "$RETIRED"
 check "no crumb commit made" test "$(git -C "$W" log -1 --format=%s)" = "feat"
 # 13 lease protects against someone else's push between fetch and push
 mk t13; advance_main "$tmp/t13/seed" main-only.txt m
@@ -134,8 +139,9 @@ check "t14 push reached origin" test "$(ohead)" = "$(git -C "$W" rev-parse HEAD)
 check "t14 origin head moved" test "$(ohead)" != "$before"
 check "t14 rebased onto main" git -C "$W" merge-base --is-ancestor origin/main HEAD
 check "t14 old crumb-only commit dropped" test "$(git -C "$W" log --format=%s origin/main..HEAD | grep -c '^crumb compile$')" = 0
-check "t14 last commit is fresh crumb compile" test "$(git -C "$W" log -1 --format=%s)" = "crumb compile (after rebase onto main)"
-check "t14 crumb is main's copy plus compile" test "$(cat "$W/.crumb")" = "$(printf 'maincrumb\ncompiled')"
+check "t14 last commit is the feat source commit" test "$(git -C "$W" log -1 --format=%s)" = "feat"
+check "t14 no crumb compile commit added" nocrumbcommit "$W"
+check "t14 crumb is main's copy" test "$(cat "$W/.crumb")" = "maincrumb"
 check "t14 feat source change kept" test -f "$W/feat.txt"
 check "t14 no rebase left in progress" test ! -d "$W/.git/rebase-merge"
 
@@ -151,8 +157,9 @@ expect 0 "consecutive crumb conflicts rebase" "$W" feat
 check "t15 push reached origin" test "$(ohead)" = "$(git -C "$W" rev-parse HEAD)"
 check "t15 origin head moved" test "$(ohead)" != "$before"
 check "t15 no old crumb compile commits left" test "$(git -C "$W" log --format=%s origin/main..HEAD | grep -c '^crumb compile$')" = 0
-check "t15 last commit is fresh crumb compile" test "$(git -C "$W" log -1 --format=%s)" = "crumb compile (after rebase onto main)"
-check "t15 crumb is main's copy plus compile" test "$(cat "$W/.crumb")" = "$(printf 'maincrumb\ncompiled')"
+check "t15 last commit is the feat2 source commit" test "$(git -C "$W" log -1 --format=%s)" = "feat2"
+check "t15 no crumb compile commit added" nocrumbcommit "$W"
+check "t15 crumbs are main's copy" test "$(cat "$W/.crumb") $(cat "$W/docs/.crumb")" = "maincrumb mdoc"
 check "t15 feat2 source change kept" test -f "$W/feat2.txt"
 check "t15 no rebase left in progress" test ! -d "$W/.git/rebase-merge"
 
@@ -168,8 +175,12 @@ expect 0 "stacked branch after base squash rebases" "$W" feat
 check "t16 origin head moved" test "$(ohead)" != "$before"
 check "t16 base source not duplicated" test "$(git -C "$W" log --format=%s origin/main..HEAD | grep -c '^base src$')" = 0
 check "t16 child source kept" test -f "$W/feat3.txt"
-check "t16 last commit is fresh crumb compile" test "$(git -C "$W" log -1 --format=%s)" = "crumb compile (after rebase onto main)"
+check "t16 last commit is the child source commit" test "$(git -C "$W" log -1 --format=%s)" = "child src"
+check "t16 no crumb compile commit added" nocrumbcommit "$W"
+check "t16 crumb is main's copy" test "$(cat "$W/.crumb")" = "squashcrumb"
 check "t16 no old crumb compile commits left" test "$(git -C "$W" log --format=%s origin/main..HEAD | grep -c '^crumb compile$')" = 0
+
+if [ ! -e "$tmp/crumb-called" ]; then ok; else no "crumb tool was called: $(cat "$tmp/crumb-called")"; fi
 
 echo "PASS $pass FAIL $bad"
 [ "$bad" -eq 0 ]

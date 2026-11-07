@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# 19: missing or stale required crumbs block admission. The real scripts/pr-gate.sh (with a fake `gh` that
-# answers from fixtures: open PR, CLEAN, no required contexts) is run with --worktree on a clone whose PR
-# branch (a) changed source without recompiling (STALE), (b) deleted a leaf .crumb (MISSING, parent STALE),
-# (c) changed source and committed the compiled crumbs as a separate last commit (control: PASS).
-# (a) and (b) must stop at "GATE crumb: FAIL"; (c) must pass the crumb gate. Real `crumb`, no network.
+# 19: since the crumb retirement (2026-11-07, DRA-97) stale, missing or mixed crumbs no longer block admission.
+# The real scripts/pr-gate.sh (with a fake `gh` that answers from fixtures: open PR, CLEAN, no required contexts)
+# is run with --worktree on a clone whose PR branch (a) changed source without recompiling (formerly STALE),
+# (b) deleted a .crumb (formerly MISSING), (c) changed source only, with no crumb commit, (d) changed source and
+# a .crumb in one last commit (formerly refused by rule 2). Every case must exit 0 with
+# "GATE crumb: SKIP retired". The crumb tool is never needed: CRUMB and a `crumb` on PATH are stubs that record
+# any call and exit 99, and the proof checks they were never called. No network.
 here="$(cd "$(dirname "$0")" && pwd)"; . "$here/lib.sh"
-proof_begin 19 "pr-gate.sh refuses stale or missing crumbs" "${1:-}"
+proof_begin 19 "pr-gate.sh no longer refuses stale, missing or mixed crumbs (retired, DRA-97)" "${1:-}"
 GATE=${PR_GATE:-$here/../pr-gate.sh}; [ -x "$GATE" ] || { echo "pr-gate.sh not found at $GATE" >&2; exit 2; }
 export SLEEP_SECS=0
 clone_repo "$TMP/seed"; git -C "$TMP/seed" checkout -q -B main
@@ -23,7 +25,8 @@ case "$1 $2" in
   *) echo "fake gh: unhandled: $*" >&2; exit 2 ;;
 esac
 S
-chmod +x "$TMP/bin/gh"; export PATH="$TMP/bin:$PATH"
+printf '#!/usr/bin/env bash\necho "$*" >> "%s/crumb-called"\nexit 99\n' "$TMP" > "$TMP/bin/crumb"
+chmod +x "$TMP/bin/gh" "$TMP/bin/crumb"; export PATH="$TMP/bin:$PATH" CRUMB="$TMP/bin/crumb"
 fx() {   # fx <case> <branch> <sha>
   mkdir -p "$FX/$1"
   printf '{"number":1,"state":"OPEN","isDraft":false,"baseRefName":"main","headRefName":"%s","headRefOid":"%s","mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","reviewDecision":"","statusCheckRollup":[]}\n' "$2" "$3" > "$FX/$1/pr.json"
@@ -33,20 +36,20 @@ F=$(tracked_file_in "$W" "$L")
 MAIN=main
 branch() { git -C "$W" checkout -q -b "$1" "origin/$MAIN"; }
 push() { git -C "$W" push -q origin "$1"; git -C "$W" rev-parse HEAD; }
+admitted() {   # admitted <label> : last gate run exited 0 with the retired SKIP and no crumb FAIL
+  check_eq "$1: pr-gate exits 0 (dry run)" "$RC" 0
+  check "$1: GATE crumb: SKIP retired" grep -qF 'GATE crumb: SKIP retired 2026-11-07 (DRA-97); .crumb files are history' <<<"$OUT"
+  check "$1: no GATE crumb: FAIL" bash -c '! grep -q "^GATE crumb: FAIL" <<<"$1"' _ "$OUT"
+}
 
-# (a) stale: source change committed without recompiling
+# (a) formerly stale: source change committed without recompiling
 branch stale; printf '\n# proof 19 stale\n' >> "$W/$F"; git -C "$W" commit -qam "source change, no crumb compile"
 SHA=$(push stale); fx stale stale "$SHA"
 export CASE=stale; measure gate_stale "$GATE" proof-repo 1 --worktree "$W" --dry-run
-check_eq "stale tree: pr-gate exits 1" "$RC" 1
-check "stale tree: stops at GATE crumb: FAIL" grep -q '^GATE crumb: FAIL crumb verify did not print OK' <<<"$OUT"
+admitted "stale tree"
 note "$(grep '^GATE crumb' <<<"$OUT" | cut -c1-110)"
 
-# (b) missing: a .crumb deleted. RFC-0003 D7 (amended 2026-10-11): children[] holds the NEAREST crumbed descendants,
-# so every .crumb is reachable from the root digest and any deletion must be refused.
-#   (b1) parent holds a crumb (immediate child).
-#   (b2) parent holds no crumb (deep leaf under uncrumbed directories): the orphan case that was invisible before the
-#        amendment (recorded as FAILED in the first run of 2026-10-11, fixed in tools/crumb/crumb.c the same day).
+# (b) formerly missing: a .crumb deleted (immediate child of a crumbed parent, and a deep one if present)
 IMM=""; DEEP=""
 for d in $(crumb_dirs "$W" | grep -v '^\.$'); do
   p=${d%/*}; [ "$p" = "$d" ] && p=.
@@ -56,32 +59,30 @@ num "immediate_child_crumb=$IMM"; num "deep_crumb_without_crumbed_parent=${DEEP:
 branch missing-immediate; git -C "$W" rm -q "$IMM/.crumb"; git -C "$W" commit -qm "delete $IMM/.crumb"
 SHA=$(push missing-immediate); fx missing missing-immediate "$SHA"
 export CASE=missing; measure gate_missing_immediate "$GATE" proof-repo 1 --worktree "$W" --dry-run
-check_eq "missing immediate-child crumb: pr-gate exits 1" "$RC" 1
-check "missing immediate-child crumb: stops at GATE crumb: FAIL" grep -q '^GATE crumb: FAIL' <<<"$OUT"
+admitted "missing immediate-child crumb"
 if [ -n "$DEEP" ]; then
   branch missing-deep; git -C "$W" rm -q "$DEEP/.crumb"; git -C "$W" commit -qm "delete $DEEP/.crumb"
   SHA=$(push missing-deep); fx deep missing-deep "$SHA"
   export CASE=deep; measure gate_missing_deep "$GATE" proof-repo 1 --worktree "$W" --dry-run
-  check_eq "missing deep crumb (orphan, parent ${DEEP%/*} has no .crumb): pr-gate exits 1" "$RC" 1
-  check "missing deep crumb: stops at GATE crumb: FAIL" grep -q '^GATE crumb: FAIL' <<<"$OUT"
+  admitted "missing deep crumb"
 else
   note "no deep crumb without a crumbed parent in this repository; (b2) not applicable"
 fi
 
-# (c) control: same source change, compiled, crumb commit separate and last
+# (c) source change only, no crumb commit: the final SHA is the source commit
 branch ok; printf '\n# proof 19 ok\n' >> "$W/$F"; git -C "$W" commit -qam "source change"
-( cd "$W" && $CRUMB compile . >/dev/null ); git -C "$W" add -A; git -C "$W" commit -qm "crumb compile"
 SHA=$(push ok); fx ok ok "$SHA"
 export CASE=ok; measure gate_ok "$GATE" proof-repo 1 --worktree "$W" --dry-run
-check_eq "compiled tree: pr-gate exits 0 (dry run)" "$RC" 0
-check "compiled tree: GATE crumb: PASS" grep -q '^GATE crumb: PASS' <<<"$OUT"
+admitted "source-only head"
 note "$(grep '^GATE crumb' <<<"$OUT" | cut -c1-110)"
 
-# (d) mixed last commit: crumbs and source in one commit is refused even though verify is OK
-branch mixed; printf '\n# proof 19 mixed\n' >> "$W/$F"; ( cd "$W" && $CRUMB compile . >/dev/null )
-git -C "$W" add -A; git -C "$W" commit -qm "source + crumbs together"
+# (d) formerly refused: source and a .crumb changed in the same last commit
+branch mixed; printf '\n# proof 19 mixed\n' >> "$W/$F"; printf '\n' >> "$W/$L/.crumb"
+git -C "$W" add -A; git -C "$W" commit -qm "source + crumb together"
 SHA=$(push mixed); fx mixed mixed "$SHA"
 export CASE=mixed; measure gate_mixed "$GATE" proof-repo 1 --worktree "$W" --dry-run
-check_eq "mixed last commit: pr-gate exits 1" "$RC" 1
-check "mixed last commit: refused by rule 2" grep -q 'crumb commit must be separate and last' <<<"$OUT"
+admitted "mixed last commit"
+check "mixed last commit: not refused by rule 2" bash -c '! grep -q "crumb commit must be separate and last" <<<"$1"' _ "$OUT"
+
+check "the crumb tool was never called" test ! -e "$TMP/crumb-called"
 proof_end

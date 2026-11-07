@@ -27,9 +27,9 @@ The pipeline worker (`aien-test worker`, ADR 0033 amendment) follows the same ta
 1. Finish every source change. Run the tests the change needs.
 2. `crumb compile .` regenerates the structural block of every stale crumb (the changed directory, its ancestors, the root; siblings are untouched, RFC-0003 section 3).
 3. `crumb verify .` must print `crumb verify: OK: <n> crumbs current` and exit 0. If it prints `FAIL`, run compile again; if it still fails, the tree has a change the compiler cannot describe and the work stops there.
-4. Commit the generated `.crumb` files **alone, as the last commit** of the branch (message `crumb compile`, nothing else in the diff). `scripts/pr-gate.sh` refuses a head whose last commit mixes `.crumb` and source.
-5. The commit that results, source plus crumb commit, is the **final SHA**. It is the only identity the pipeline qualifies: `aien-test verify <final SHA>` reads crumbs that are CURRENT at that commit; the pre-crumb SHA fails `crumb verify` and is never READY (proof 21 in `scripts/pipeline-proofs/`).
-6. Any source edit after that commit reopens step 1. A rebase onto a moved `main` goes through `scripts/rebase-crumb.sh`, which takes main's crumbs, recompiles, and commits the crumbs again as the new last commit (proof 20).
+4. Commit the generated `.crumb` files **alone, as the last commit** of the branch (message `crumb compile`, nothing else in the diff). `scripts/pr-gate.sh` refused a head whose last commit mixed `.crumb` and source; since DRA-97 its crumb step only prints SKIP.
+5. The commit that results, source plus crumb commit, is the **final SHA**. It is the only identity the pipeline qualifies: `aien-test verify <final SHA>` reads crumbs that are CURRENT at that commit; the pre-crumb SHA fails `crumb verify` and is never READY. Since DRA-97 the final SHA is the last source commit (proof 21 in `scripts/pipeline-proofs/` now proves that).
+6. Any source edit after that commit reopens step 1. A rebase onto a moved `main` goes through `scripts/rebase-crumb.sh`, which took main's crumbs, recompiled, and committed the crumbs again as the new last commit; since DRA-97 it only takes main's crumbs on a crumb-only conflict, with no recompile and no crumb commit (proof 20).
 
 Measured on this repository and on sovereign-core main, 2026-10-11: `scripts/pipeline-proofs/RESULTS-2026-10-11.md`.
 

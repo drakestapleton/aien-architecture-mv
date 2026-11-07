@@ -43,7 +43,7 @@ If a repository does not support these commands, report the discrepancy and foll
 
 `scripts/pr-gate.sh` reads GitHub's CLEAN state. It does not prove the commit was verified. The local admission check that complements CLEAN is `aien-test verify COMMIT` (sovereign-core `tools/aien-test`, ADR 0033 amendment 2026-10-11): it prints READY when every gate required at the base ref has a PASS receipt for that exact commit and the crumbs are CURRENT there, and BLOCKED otherwise, with the reason (a missing or NOT_RUN gate, STALE crumbs, an UNMAPPED changed path, or a BLOCKED_OPERATOR head). Run it on the final SHA, the one that includes the crumb commit (`docs/crumbs/LOCAL_PIPELINE.md` section 2); a pre-crumb SHA is never READY.
 
-Trust anchors come from the base ref, never from the head under test (ADR 0033 amendment, A1): the required gate set, `.aien/verify.pub`, `.aien/always` and `.aien/unmapped-ok` are read from `origin/main`. A head that changes the pipeline's own configuration (`.aien/`, `tests/gates/`, `.github/workflows/`, `.forgejo/`, `tools/aien-test/`) is BLOCKED_OPERATOR: the operator runs its verification by hand and says so in the PR. Acceptance proofs for the crumb side of this rule (determinism, fixed point, staleness, claims, rebase, final SHA) are `scripts/pipeline-proofs/13-*.sh` to `21-*.sh`; measured numbers in `scripts/pipeline-proofs/RESULTS-2026-10-11.md`.
+Trust anchors come from the base ref, never from the head under test (ADR 0033 amendment, A1): the required gate set, `.aien/verify.pub`, `.aien/always` and `.aien/unmapped-ok` are read from `origin/main`. A head that changes the pipeline's own configuration (`.aien/`, `tests/gates/`, `.github/workflows/`, `.forgejo/`, `tools/aien-test/`) is BLOCKED_OPERATOR: the operator runs its verification by hand and says so in the PR. Acceptance proofs for the crumb side of this rule (determinism, fixed point, staleness, claims) are `scripts/pipeline-proofs/13-*.sh` to `18-*.sh`; measured numbers in `scripts/pipeline-proofs/RESULTS-2026-10-11.md`. Since the retirement (DRA-97, 2026-11-07) proofs `19-*.sh` to `21-*.sh` prove the opposite: `pr-gate.sh` admits stale, missing or mixed crumbs with `GATE crumb: SKIP retired`, `rebase-crumb.sh` runs no crumb tool and adds no crumb commit, and the final SHA is the last source commit.
 
 ## 3. Rebase and Crumb Conflicts
 
@@ -61,9 +61,9 @@ Before running it:
 - Preserve the expected remote head for force-with-lease protection.
 - Ensure no other worker is writing to that branch.
 
-The script takes main's `.crumb`, recompiles crumbs as the last commit, and pushes with lease.
+The script takes main's `.crumb` when a conflict is only in `.crumb` files, and pushes with lease. Since the crumb retirement (DRA-97, 2026-11-07) it no longer runs `crumb compile` or `crumb verify` and adds no crumb commit.
 
-If it reports CODE CONFLICT, stop automated rebasing for that branch. Resolve the source conflict before recompiling.
+If it reports CODE CONFLICT, stop automated rebasing for that branch. Resolve the source conflict by hand.
 
 Never discard source changes to manufacture a clean rebase.
 
@@ -76,7 +76,7 @@ A PR may merge only when all of the following hold:
 - Working tree is clean.
 - Changes are based on the intended current main.
 - No unresolved merge conflicts.
-- Required compilation and crumb verification pass.
+- Required compilation passes (crumb verification is retired, DRA-97).
 - Required tests and CI checks pass.
 - Required approvals are present and valid.
 - GitHub reports a mergeable state.

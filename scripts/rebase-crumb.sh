@@ -1,16 +1,14 @@
 #!/usr/bin/env bash
 # Rebase a PR branch onto origin/main, resolve conflicts that are only in .crumb files by taking
-# main's copy, recompile crumbs as a fresh last commit, and push with a lease on the old head.
+# main's copy, and push with a lease on the old head. Crumb compile/verify is retired (2026-11-07,
+# DRA-97): the crumb tool is never run and no crumb commit is added; .crumb files are history.
 #
 # Usage: rebase-crumb.sh <worktree> <branch>
-# Env:   GIT (default git), CRUMB (default crumb), so tests can stub the tools.
-# Exit:  0 done, 2 precondition refused, 3 CODE CONFLICT (rebase aborted), 4 crumb or rebase failure
-#        (nothing pushed).
+# Env:   GIT (default git), so tests can stub it.
+# Exit:  0 done, 2 precondition refused, 3 CODE CONFLICT (rebase aborted), 4 checkout, rebase or push
+#        failure (nothing pushed).
 set -u
 GIT=${GIT:-git}
-CRUMB=${CRUMB:-crumb}
-TRAILERS='Co-authored-by: Drake Stapleton <drake@aienos.com>
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>'
 
 refuse() { echo "REFUSED: $1" >&2; exit 2; }
 
@@ -82,22 +80,7 @@ while rebasing; do
   advance || fail_rebase
 done
 
-if $GIT ls-files '*.crumb' '**/.crumb' | grep -q .; then
-  $CRUMB compile . >/dev/null 2>&1
-  VOUT=$($CRUMB verify . 2>&1); VRC=$?
-  if [ "$VRC" -ne 0 ] || ! echo "$VOUT" | tail -1 | grep -q 'OK' || echo "$VOUT" | tail -1 | grep -q 'FAIL'; then
-    echo "crumb verify did not print OK; nothing pushed: $(echo "$VOUT" | tail -1)" >&2
-    exit 4
-  fi
-  echo "crumb: $(echo "$VOUT" | tail -1)"
-  if [ -n "$($GIT status --porcelain)" ]; then
-    $GIT add -A && $GIT commit -q -m "crumb compile (after rebase onto main)
-
-$TRAILERS" || { echo "crumb commit failed" >&2; exit 4; }
-  fi
-else
-  echo "crumb: no crumbs in repo, step skipped (rule 2 notice)"
-fi
+echo "crumb: retired (DRA-97), conflicting .crumb files keep main's copy; no compile, verify or crumb commit"
 
 $GIT push -q --force-with-lease="refs/heads/$B:$LEASE" origin "$B" || { echo "push failed (lease or network)" >&2; exit 4; }
 echo "rebased $B onto $($GIT rev-parse --short origin/main): $($GIT log --oneline -1 | cut -c1-70)"

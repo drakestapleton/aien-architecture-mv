@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Offline test for pr-gate.sh. A fake `gh` on PATH answers from fixture JSON chosen by $CASE and
 # records any merge command line. Local and crumb steps use real temporary git repos (bare origin
-# plus worktree) and a fake `crumb`. No network, no auth.
+# plus worktree). The crumb step is retired (DRA-97): a `crumb` stub that exits 99 is on PATH and in
+# $CRUMB, and the test proves it is never called. No network, no auth.
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"
 gate="$here/pr-gate.sh"
@@ -38,12 +39,13 @@ esac
 S
 cat > "$tmp/bin/crumb" <<'S'
 #!/usr/bin/env bash
-[ "$1" = verify ] || exit 0
-if [ "${CRUMB_FAIL:-0}" = 1 ]; then echo "crumb verify: FAIL: stale"; exit 1; fi
-echo "crumb verify: OK"
+# retired: any call is a test failure (recorded, then exit 99)
+echo "$*" >> "$FX/crumb-called"
+exit 99
 S
 chmod +x "$tmp/bin/gh" "$tmp/bin/crumb"
-export PATH="$tmp/bin:$PATH"
+export PATH="$tmp/bin:$PATH" CRUMB="$tmp/bin/crumb"
+RETIRED='GATE crumb: SKIP retired 2026-11-07 \(DRA-97\); .crumb files are history'
 
 pass=0; bad=0
 ok() { pass=$((pass+1)); }
@@ -73,6 +75,7 @@ fx clean;      export CASE=clean;     expect 0 "clean PR passes dry run" repo1 7
 has "dry run prints pr PASS" 'GATE pr: PASS'
 has "local skipped without worktree" 'GATE local: SKIP no worktree given'
 has "merge skipped in dry run" 'GATE merge: SKIP dry run'
+has "crumb step retired without worktree" "$RETIRED"
 has "queue marks BEHIND PR as needing rebase" 'QUEUE #9 other BEHIND needs scripts/rebase-crumb.sh'
 has "queue shows clean PR plainly" 'QUEUE #10 third CLEAN$'
 hasnot "queue omits the PR itself" 'QUEUE #7 '
@@ -151,7 +154,7 @@ lfx() { # lfx <case> : fixture whose headRefOid is the worktree HEAD
 }
 mkrepo l1; lfx l1; CASE=l1 expect 0 "local+crumb clean passes" repo1 7 --dry-run --worktree "$W"
 has "local PASS" 'GATE local: PASS'
-has "crumb PASS" 'GATE crumb: PASS'
+has "crumb step retired with worktree" "$RETIRED"
 
 mkrepo l2; echo dirt >> "$W/feat.txt"; lfx l2; CASE=l2 expect 1 "dirty worktree refuses" repo1 7 --dry-run --worktree "$W"
 has "dirty reason" 'worktree is dirty'
@@ -169,19 +172,30 @@ lfx l5; CASE=l5 expect 1 "stale base refuses" repo1 7 --dry-run --worktree "$W"
 has "stale base points at rebase script" 'run scripts/rebase-crumb.sh'
 
 mkrepo l6; ( cd "$W" && echo src2 > src2.txt && git add -A && git commit -q --amend -m "mixed" )
-lfx l6; CASE=l6 expect 1 "HEAD commit mixing source and .crumb refuses" repo1 7 --dry-run --worktree "$W"
-has "mixed commit reason" 'must be separate and last'
+lfx l6; CASE=l6 expect 0 "HEAD commit mixing source and .crumb no longer refuses (rule 2 retired)" repo1 7 --dry-run --worktree "$W"
+has "mixed commit gives retired SKIP" "$RETIRED"
+hasnot "mixed commit not refused by rule 2" 'must be separate and last'
 
-mkrepo l7; lfx l7; CRUMB_FAIL=1 CASE=l7 expect 1 "crumb verify failure refuses" repo1 7 --dry-run --worktree "$W"
-has "verify reason" 'did not print OK'
+mkrepo l7; lfx l7; CRUMB=/nonexistent/crumb CASE=l7 expect 0 "missing crumb tool does not matter" repo1 7 --dry-run --worktree "$W"
+has "missing crumb tool gives retired SKIP" "$RETIRED"
+hasnot "no crumb verify message" 'did not print OK'
 
 mkrepo l8 nocrumb; lfx l8; CASE=l8 expect 0 "repo without crumbs passes" repo1 7 --dry-run --worktree "$W"
-has "no crumbs gives SKIP notice" 'GATE crumb: SKIP no crumbs in repo \(rule 2 notice\)'
+has "no crumbs gives retired SKIP" "$RETIRED"
 
 # crumbs exist but this PR does not touch them: HEAD may be a source commit
 mkrepo l9
 ( cd "$W" && git reset -q --hard HEAD~1 && git push -q -f origin feat )
 lfx l9; CASE=l9 expect 0 "PR that does not touch crumbs may end on a source commit" repo1 7 --dry-run --worktree "$W"
+
+# a PR that deletes a .crumb, or changes source after its crumb commit (stale crumbs), is not refused
+mkrepo l10; ( cd "$W" && git rm -q .crumb && git commit -q -m "delete crumb" && git push -q origin feat )
+lfx l10; CASE=l10 expect 0 "deleted .crumb does not refuse" repo1 7 --dry-run --worktree "$W"
+has "deleted .crumb gives retired SKIP" "$RETIRED"
+mkrepo l11; ( cd "$W" && echo later > later.txt && git add -A && git commit -q -m "source after crumb" && git push -q origin feat )
+lfx l11; CASE=l11 expect 0 "source after the crumb commit does not refuse" repo1 7 --dry-run --worktree "$W"
+
+if [ ! -e "$FX/crumb-called" ]; then ok; else no "crumb tool was called: $(cat "$FX/crumb-called")"; fi
 
 echo "PASS $pass FAIL $bad"
 [ "$bad" -eq 0 ]

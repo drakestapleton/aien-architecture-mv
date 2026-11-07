@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # PR merge gate for aien-dev repositories. Reads GitHub state at the moment of the call, checks
-# docs/REPOSITORY_EXECUTION_RULES.md rules 2, 4 and 5, then (unless --dry-run) squash-merges.
+# docs/REPOSITORY_EXECUTION_RULES.md rules 4 and 5, then (unless --dry-run) squash-merges. Rule 2
+# (crumb compile/verify) is retired (2026-11-07, DRA-97): step 3 always SKIPs and never runs crumb.
 # It does not replace a human read of the diff, and it never rebases anything by itself.
 #
 # Usage: pr-gate.sh <repo> <pr-number> [--worktree DIR] [--dry-run] [--admin-authorized-by "<who, date, reason>"]
-# Env:   GH (default gh), GIT (default git), CRUMB (default crumb), SLEEP_SECS (default 10, UNKNOWN retry).
+# Env:   GH (default gh), GIT (default git), SLEEP_SECS (default 10, UNKNOWN retry).
 # Output: one line per step, "GATE <step>: PASS|FAIL|SKIP <reason>". Exit 1 at the first FAIL.
 set -u
 GH=${GH:-gh}
 GIT=${GIT:-git}
-CRUMB=${CRUMB:-crumb}
 SLEEP_SECS=${SLEEP_SECS:-10}
 
 usage() { echo 'usage: pr-gate.sh <repo> <pr-number> [--worktree DIR] [--dry-run] [--admin-authorized-by "<who, date, reason>"]' >&2; exit 2; }
@@ -59,21 +59,8 @@ else
   pass local "clean, on $CUR, HEAD matches GitHub, based on current origin/main"
 fi
 
-# 3. crumb
-if [ -z "$WT" ]; then
-  skip crumb "no worktree given"
-elif ! $G ls-files '*.crumb' '**/.crumb' | grep -q .; then
-  skip crumb "no crumbs in repo (rule 2 notice)"
-else
-  VOUT=$(cd "$WT" && $CRUMB verify . 2>&1); VRC=$?
-  VLAST=$(echo "$VOUT" | tail -1)
-  { [ "$VRC" -eq 0 ] && echo "$VLAST" | grep -q 'OK' && ! echo "$VLAST" | grep -q 'FAIL'; } || fail crumb "crumb verify did not print OK: $VLAST"
-  if $G diff --name-only origin/main...HEAD | grep -q '\.crumb$'; then
-    NONCRUMB=$($G diff-tree --no-commit-id --name-only -r HEAD | grep -v '\.crumb$' || true)
-    [ -z "$NONCRUMB" ] || fail crumb "crumbs changed but the HEAD commit also changes source ($(echo "$NONCRUMB" | head -3 | tr '\n' ' ')); the crumb commit must be separate and last (rule 2)"
-  fi
-  pass crumb "verify OK, crumb commit is separate and last"
-fi
+# 3. crumb: rule 2 is retired. No crumb verify, no crumb-commit-last check; .crumb files are history.
+skip crumb "retired 2026-11-07 (DRA-97); .crumb files are history"
 
 # 4. base
 TRIES=0
