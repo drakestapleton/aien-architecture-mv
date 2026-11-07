@@ -1,4 +1,6 @@
 # tests/gates/crumb.gate (template; ADR 0033 amendment 2026-10-11, lane CRUMB)
+# RETIRED (DRA-97, 2026-11-07): Crumbs are off the active workflow. Do not copy this
+# template into a repository; it is kept as history only.
 # The always-run crumb check of every enrolled repository. Manifest v2 grammar
 # (ARCH-0028 Decision 3 plus ARCH-0033 Decision 2). Copy to tests/gates/crumb.gate,
 # set `owner` to the repository name, and list under `inputs` the ".crumb" entry

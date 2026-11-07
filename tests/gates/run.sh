@@ -10,17 +10,9 @@ step="${1:?usage: tests/gates/run.sh <step>}"
 obs() { printf 'AIEN-OBS %s %s\n' "$1" "$2"; }
 
 case "$step" in
-  crumb-verify)
-    # Hosted crumb.yml step "Crumbs must be exactly what the compiler produces now", with the
-    # same make target. The binary is built in a private copy of tools/crumb, not in place:
-    # crumb-tool-test builds and runs tools/crumb/crumb at the same time, and two gates writing
-    # and executing one file raced ("Text file busy", failed tool tests; SANDBOX lane 2026-10-11).
-    tool=$(mktemp -d)
-    trap 'rm -rf "$tool"' EXIT
-    cp tools/crumb/Makefile tools/crumb/crumb.c "$tool/"
-    make -C "$tool" crumb
-    "$tool/crumb" verify .
-    ;;
+  # crumb-verify (gate CRUMB-VERIFY) is retired (DRA-97, 2026-11-07): Crumbs are off the active
+  # workflow, so no gate checks crumb freshness. The crumb tool, its tests (crumb-tool-test below)
+  # and the .crumb files stay.
   crumb-tool-test)
     # Hosted crumb.yml step "Build and test the crumb tool".
     make -C tools/crumb test

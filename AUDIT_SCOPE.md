@@ -79,8 +79,7 @@ $AIEN_OMC < tools/candidate/check_candidate.om > check_candidate && chmod +x che
 NOT_RUN while writing this document. From README and `tests/gates/run.sh`:
 
 ```sh
-./tools/crumb/crumb verify .
-bash tests/gates/run.sh crumb-verify
+./tools/crumb/crumb verify .                     # optional: Crumbs are retired (DRA-97), no gate runs it
 bash tests/gates/run.sh crumb-tool-test
 bash tests/gates/run.sh script-tests
 AIEN_OMC=<pinned omc> bash tests/gates/run.sh doctrine

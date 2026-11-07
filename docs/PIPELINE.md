@@ -4,7 +4,7 @@
 
 The [`AIEN` workflow](../.github/workflows/aien-verification.yml) separates two checks:
 
-- **AIEN Checks** runs on pull requests and pushes to `main`. It checks crumbs, then runs the portable smoke gates declared at the base ref when the repository is enrolled. This is advisory, not a merge requirement and not a signed Spark receipt check.
+- **AIEN Checks** runs on pull requests and pushes to `main`. It runs the portable smoke gates declared at the base ref when the repository is enrolled (its crumb step is retired: Crumbs left the active workflow under DRA-97, 2026-11-07). This is advisory, not a merge requirement and not a signed Spark receipt check.
 - **AIEN Alpha** runs only on `alpha/*` tag pushes. The tag must point to a commit on `main`; this job requires a full signed Spark bundle from [aien-receipts](https://github.com/aien-dev/aien-receipts/tree/main/aien-architecture), verified against trust anchors from `origin/main`. A green PR check does not qualify Alpha.
 
 GitHub branch rules and classic protection currently require no status check for merges (checked 2026-10-26). The old requirement for `AIEN Verification` no longer applies. The local Spark judge can still produce signed bundles, but their presence is not implied by a PR check. A maintainer must review the diff and decide whether to merge; do not add `ready-to-merge` on the strength of an advisory check.

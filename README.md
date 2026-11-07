@@ -94,17 +94,17 @@ The [necessary-work programme](docs/plans/necessary-work/README.md) (2026-10-18,
 
 ## Building and testing
 
-There is no product to build here. The one program is the crumb tool in `tools/crumb`. It needs only a C11 compiler and `make`. Build it, run its tests, and check that every `.crumb` file matches what the tool produces now:
+There is no product to build here. The one program is the crumb tool in `tools/crumb`. It needs only a C11 compiler and `make`. Build it and run its tests:
 
 ```sh
 make -C tools/crumb test
-./tools/crumb/crumb verify .
 ```
 
-The Spark runs five gates on every pull request. Each manifest in `tests/gates/` calls `tests/gates/run.sh` with one step word, so you can run the same steps yourself (the script needs `bash`; plain `sh` stops at `set -o pipefail`):
+Crumbs are retired from the active workflow (DRA-97, 2026-11-07): no gate checks that the `.crumb` files are current, and they stay as history. `./tools/crumb/crumb verify .` still works if you want to look.
+
+The Spark runs these gates on every pull request. Each manifest in `tests/gates/` calls `tests/gates/run.sh` with one step word, so you can run the same steps yourself (the script needs `bash`; plain `sh` stops at `set -o pipefail`):
 
 ```sh
-bash tests/gates/run.sh crumb-verify          # gate CRUMB-VERIFY: the crumbs are current
 bash tests/gates/run.sh crumb-tool-test       # gate ARCH-CRUMB-TOOL-TEST: the crumb tool tests
 bash tests/gates/run.sh script-tests          # gate ARCH-SCRIPT-TESTS: tests of the four checked scripts
 AIEN_OMC=<pinned omc> bash tests/gates/run.sh doctrine   # gate ARCH-DOCTRINE: doctrine consistency (tools/doctrine, seeded .om; NOT_RUN without the pinned compiler)
@@ -117,7 +117,7 @@ For a Cargo repository, `CRUMB="$PWD/tools/crumb/crumb" bash scripts/pipeline-pr
 
 ## How a pull request is judged
 
-Since the 2026-10-24 merge-policy change, GitHub-hosted **AIEN Checks** on pull requests and `main` are advisory: they run `crumb verify` and, for enrolled repositories, portable smoke gates. They do not download a signed Spark bundle or gate a merge. The **AIEN Alpha** job runs only on `alpha/*` tags, requiring a signed full Spark bundle for a tagged commit on `main`. See [docs/PIPELINE.md](docs/PIPELINE.md) for the current flow and the older process.
+Since the 2026-10-24 merge-policy change, GitHub-hosted **AIEN Checks** on pull requests and `main` are advisory: for enrolled repositories they run portable smoke gates (their crumb verify step is retired, DRA-97). They do not download a signed Spark bundle or gate a merge. The **AIEN Alpha** job runs only on `alpha/*` tags, requiring a signed full Spark bundle for a tagged commit on `main`. See [docs/PIPELINE.md](docs/PIPELINE.md) for the current flow and the older process.
 
 The crumb tool on `main` can now compute the generated part of each `.crumb` file on demand instead of storing it (RFC-0003 amendment 1, pull request #271, merged 2026-10-18; [docs/CRUMB_PROTOCOL_RFC_0003.md](docs/CRUMB_PROTOCOL_RFC_0003.md)). This repository switched on 2026-10-19 (pull request #272): its `.crumb` files no longer store that data, and `crumb verify .` computes it when it checks.
 

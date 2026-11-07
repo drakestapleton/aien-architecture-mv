@@ -27,6 +27,8 @@ One worker owns each writable worktree. Never allow two workers to modify the sa
 
 ## 2. Crumb Compilation
 
+Retired (DRA-97, 2026-11-07: "Retire Crumbs from the active workflow while preserving live ownership"). A PR needs no `crumb compile`, no `crumb verify` and no separate crumb commit; existing `.crumb` files stay as history. The rule as it stood:
+
 Every applicable PR must have `.crumb` compilation and verification completed after its final source change.
 
 Required commands: `crumb compile .` then `crumb verify .`

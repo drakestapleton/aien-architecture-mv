@@ -2,16 +2,17 @@
 #
 # Drake 2026-10-24: nothing on GitHub gates a merge; main requires no status check. The Spark
 # qualifies Alpha builds instead: the local pipeline pushes annotated tags alpha/YYYYMMDD.N.
-#   AIEN Checks (pull_request, push to main): advisory. crumb verify, then for enrolled repos
-#     (.aien/verify.pub on origin/main) the portable smoke set named at origin/main.
+#   AIEN Checks (pull_request, push to main): advisory. For enrolled repos (.aien/verify.pub on
+#     origin/main) the portable smoke set named at origin/main. No crumb step: Crumbs are retired
+#     from the active workflow (DRA-97, 2026-11-07).
 #   AIEN Pinned-omc Gates (pull_request, push to main): advisory. On a hosted AArch64 runner, births
 #     the omc pinned in tools/zero-legacy/omega.pin from seed-0 and runs the host gates that need only
 #     that compiler: ARCH-CAPABILITY-REGISTER, ARCH-DOCTRINE, ARCH-ZERO-LEGACY-CLOSURE and
 #     ARCH-SCRIPT-TESTS (#363).
 #   AIEN Alpha (push of an alpha/* tag): the tagged commit must be on main; its signed Spark bundle
 #     from aien-receipts must verify (--require-full) against the trust anchors on origin/main.
-# GitHub-hosted compute builds only the pinned verifier tools, never this repository's code, with two
-# exceptions that are checkers, not shipped code: the crumb tool, and the seeded .om checkers that the
+# GitHub-hosted compute builds only the pinned verifier tools, never this repository's code, with one
+# exception that is a checker, not shipped code: the seeded .om checkers that the
 # pinned omc compiles in the pinned-omc job. That omc is born from seed-0 with no C toolchain, and every
 # gate refuses it unless it hashes as omega.pin says.
 name: AIEN
@@ -57,16 +58,6 @@ jobs:
             echo "enrolled=false" >> "$GITHUB_OUTPUT"
             echo "not enrolled: no .aien/verify.pub on the base ref; the portable smoke set is skipped"
           fi
-
-      - name: Build the crumb tool from this repository (aien-architecture owns it)
-        run: |
-          make -C tools/crumb crumb
-          mkdir -p "$RUNNER_TEMP/bin" && cp tools/crumb/crumb "$RUNNER_TEMP/bin/crumb"
-          git status --porcelain --untracked-files=normal
-          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
-
-      - name: Crumbs must be exactly what the compiler produces now
-        run: crumb verify .
 
       - name: Install Stable Rust Toolchain (for the pinned aien-test build)
         uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch head 2026-10-26

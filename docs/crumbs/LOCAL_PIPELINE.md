@@ -1,6 +1,8 @@
 # Crumbs in the sovereign local pipeline (agent lifecycle and final-commit discipline)
 
-Status: operational, 2026-10-11 (lane CRUMB of the sovereign local pipeline mission; ADR 0033 amendment of the same date). Rules here restate RFC-0001/0002/0003 for one purpose: a change that reaches `aien-test verify COMMIT` carries crumbs that are CURRENT at the exact commit being judged.
+Status: retired 2026-11-07 (DRA-97: "Retire Crumbs from the active workflow while preserving live ownership"). Kept as history; no gate or readiness check requires crumbs CURRENT, and claims go through `~/handoffs/hive/CLAIMS.md` and kanban cards, not `crumb claim`.
+
+Former status: operational, 2026-10-11 (lane CRUMB of the sovereign local pipeline mission; ADR 0033 amendment of the same date). Rules here restate RFC-0001/0002/0003 for one purpose: a change that reaches `aien-test verify COMMIT` carries crumbs that are CURRENT at the exact commit being judged.
 
 ## 1. Agent lifecycle, command by command
 
