@@ -267,9 +267,39 @@ static J *jparse(const char *s) {
 }
 
 /* ---------- files ---------- */
+/* The one file opener: every open(2)/fopen(3) of this tool goes through crumb_open or crumb_open_follow.
+ *   - An empty path, or one with a ".." component, is refused before any open (exit 1, never treated as absent):
+ *     every path the tool opens is built from a canonical directory (realpath; a configured root, HOME or git path
+ *     with a ".." is canonicalised where it is resolved, canon_path), keys normalised by norm_path, readdir names
+ *     (never "." or "..") and constant names, so a ".." here is a resolution bug and is never followed.
+ *   - O_CLOEXEC always: no descriptor leaks into the git or cc.sh children.
+ *   - O_NOFOLLOW (crumb_open) unless the call site must read through a final symbolic link (crumb_open_follow: the
+ *     working tree's own files such as .crumb or .gitignore, which git can track as links; git's info/exclude; the
+ *     operator's lane reports; /dev/urandom; a directory opened only to fsync it, whose path may name a linked root).
+ *   - openat(AT_FDCWD, ...).
+ * crumb is a local CLI without a privilege boundary: the paths come from the operator's own configuration
+ * (CRUMB_COORD_ROOT, git config, argv). This opener does not change that trust model; it makes the rules uniform. */
+static int has_dotdot(const char *p) {   /* 1 when some '/'-separated component of p is exactly ".." */
+    for (const char *s = p;;) {
+        const char *e = strchr(s, '/'); size_t n = e ? (size_t)(e - s) : strlen(s);
+        if (n == 2 && s[0] == '.' && s[1] == '.') return 1;
+        if (!e) return 0;
+        s = e + 1;
+    }
+}
+static int open_checked(const char *path, int flags, mode_t mode, int follow) {
+    if (!*path) die("PATH_REFUSED: empty path; refusing to open it");
+    if (has_dotdot(path)) die("PATH_REFUSED: %s has a '..' component; refusing to open it (crumb opens canonical paths only)", path);
+    return openat(AT_FDCWD, path, flags | O_CLOEXEC | (follow ? 0 : O_NOFOLLOW), mode);
+}
+static int crumb_open(const char *path, int flags, mode_t mode) { return open_checked(path, flags, mode, 0); }
+static int crumb_open_follow(const char *path, int flags, mode_t mode) { return open_checked(path, flags, mode, 1); }
+/* a working-tree file (follows a final symlink); NULL when it cannot be opened */
 static char *slurp(const char *path) {
-    FILE *f = fopen(path, "rb");
-    if (!f) return NULL;
+    int fd = crumb_open_follow(path, O_RDONLY, 0);
+    if (fd < 0) return NULL;
+    FILE *f = fdopen(fd, "rb");
+    if (!f) { close(fd); return NULL; }
     Buf b = {0}; bstr(&b, "");
     char t[4096]; size_t n;
     while ((n = fread(t, 1, sizeof t, f)) > 0) bput(&b, t, n);
@@ -277,9 +307,11 @@ static char *slurp(const char *path) {
     return b.p;
 }
 /* Every file this tool creates is mode 0644 (minus umask), never 0666: fopen() would create it world-writable
- * under a permissive umask (CodeQL cpp/world-writable-file-creation). append=1 opens for appending. */
+ * under a permissive umask (CodeQL cpp/world-writable-file-creation). append=1 opens git's info/exclude for appending
+ * (following a final link, as slurp read it); otherwise path is a fresh temp name and a planted link is refused. */
 static FILE *fcreate(const char *path, int append) {
-    int fd = open(path, O_WRONLY | O_CREAT | (append ? O_APPEND : O_TRUNC), 0644);
+    int flags = O_WRONLY | O_CREAT | (append ? O_APPEND : O_TRUNC);
+    int fd = append ? crumb_open_follow(path, flags, 0644) : crumb_open(path, flags, 0644);
     if (fd < 0) return NULL;
     FILE *f = fdopen(fd, append ? "a" : "wb");
     if (!f) close(fd);
@@ -296,6 +328,32 @@ static void spit(const char *path, const char *data) {
 static char *pjoin(const char *a, const char *b) {
     size_t n = strlen(a) + strlen(b) + 2; char *p = xmalloc(n);
     xsnprintf(p, n, "%s/%s", a, b); return p;
+}
+/* Canonical form of an absolute path: realpath when it exists, else each leading part that exists is resolved with
+ * realpath and the rest is applied lexically (".." of a component that does not exist yet drops it; ".." at / stays
+ * at /, as the kernel does). The result has no "." or ".." component, so no path built on it carries one. */
+static char *canon_path(const char *abs) {
+    char r[PATH_MAX];
+    if (realpath(abs, r)) return xstrdup(r);
+    Buf b = {0}; bstr(&b, "");
+    char *cp = xstrdup(abs);
+    for (char *tok = strtok(cp, "/"); tok; tok = strtok(NULL, "/")) {
+        if (!strcmp(tok, ".")) continue;
+        if (!strcmp(tok, "..")) { char *s = strrchr(b.p, '/'); if (s) { *s = 0; b.n = (size_t)(s - b.p); } continue; }
+        bstr(&b, "/"); bstr(&b, tok);
+        if (realpath(b.p, r)) { b.n = 0; bstr(&b, strcmp(r, "/") ? r : ""); }
+    }
+    free(cp);
+    if (!b.n) bstr(&b, "/");
+    return b.p;
+}
+/* a path the operator configured (environment, HOME), relative ones anchored at the working directory: as given
+ * unless it has a ".." component, which is resolved by canon_path */
+static char *canon_dotdot(const char *v) {
+    if (!has_dotdot(v)) return xstrdup(v);
+    if (v[0] == '/') return canon_path(v);
+    char cwd[PATH_MAX]; if (!getcwd(cwd, sizeof cwd)) die("cannot resolve the working directory for %s: %s", v, strerror(errno));
+    char *j = pjoin(cwd, v), *c = canon_path(j); free(j); return c;
 }
 static char *absdir(const char *d) {
     char r[PATH_MAX];
@@ -377,9 +435,15 @@ static void sweep(J *root) {  /* SPEC 5.4 */
         wh->n = m;
     }
 }
+static char *read_bounded(const char *path, size_t cap, size_t *len);
+/* .crumb.local is this tool's own state file (RFC-0001 fallback), never a link it wrote: read with the store-record
+ * reader (crumb_open, O_NOFOLLOW), so a symbolic link, FIFO or other special file there is refused (REFUSED_RECORD,
+ * exit 4) instead of being read through. The cap only bounds a runaway file; crumb's own files stay far below it. */
+#define MAX_LOCAL_BYTES ((size_t)64 << 20)
+static char *read_local(const char *path) { return read_bounded(path, MAX_LOCAL_BYTES, NULL); }
 static Local local_open(const char *dir) {
     Local l; l.dir = absdir(dir); l.path = pjoin(l.dir, ".crumb.local");
-    char *txt = slurp(l.path);
+    char *txt = read_local(l.path);
     l.root = txt ? jparse(txt) : NULL;
     if (txt && (!l.root || l.root->t != JOBJ)) die("%s is not valid JSON; fix or move it aside", l.path);
     if (!l.root) l.root = jnew(JOBJ);
@@ -398,6 +462,7 @@ static void git_exclude_local(const char *dir) {   /* keep .crumb.local out of `
     char *gp = run_git(dir, "rev-parse --git-path info/exclude");
     if (!*gp) return;
     char *full = gp[0] == '/' ? xstrdup(gp) : pjoin(dir, gp);
+    if (has_dotdot(full)) { char *c = canon_path(full); free(full); full = c; }   /* git may print a path with ".." */
     char *txt = slurp(full);
     if (txt) { char *c = xstrdup(txt); for (char *l = strtok(c, "\n"); l; l = strtok(NULL, "\n")) if (!strcmp(l, ".crumb.local")) return; }
     FILE *f = fcreate(full, 1); if (!f) return;
@@ -627,7 +692,7 @@ static char *read_bounded(const char *path, size_t cap, size_t *len) {
         die("cannot stat %s: %s", path, strerror(errno));
     }
     if (!S_ISREG(st.st_mode)) refuse(path, kind_of(st.st_mode));
-    int fd = open(path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
+    int fd = crumb_open(path, O_RDONLY | O_NONBLOCK, 0);
     if (fd < 0) {
         if (errno == ENOENT) return NULL;
         if (errno == ELOOP) refuse(path, "is a symbolic link");
@@ -672,7 +737,7 @@ static void check_real_parents(const char *store, const char *path) {
  * neither block on a planted FIFO nor follow a planted link. */
 static int create_temp(const char *tmp) {
     if (unlink(tmp) != 0 && errno != ENOENT) die("cannot remove stale %s: %s", tmp, strerror(errno));
-    int fd = open(tmp, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0644);
+    int fd = crumb_open(tmp, O_WRONLY | O_CREAT | O_EXCL, 0644);
     if (fd < 0) die("cannot write %s: %s", tmp, strerror(errno));
     return fd;
 }
@@ -736,7 +801,7 @@ static void publish_once(const char *dir, const char *path, const char *data, si
 static void ensure_marker_locked(const char *store, char hex[33]) {
     if (read_marker(store, hex)) return;
     unsigned char rb[16]; size_t got = 0;
-    int rf = open("/dev/urandom", O_RDONLY | O_CLOEXEC);
+    int rf = crumb_open_follow("/dev/urandom", O_RDONLY, 0);
     if (rf < 0) die("cannot open /dev/urandom: %s", strerror(errno));
     while (got < sizeof rb) { ssize_t r = read(rf, rb + got, sizeof rb - got); if (r < 0 && errno == EINTR) continue; if (r <= 0) die("cannot read /dev/urandom"); got += (size_t)r; }
     close(rf);
@@ -876,15 +941,14 @@ static int read_layout(const char *root) {
     return 2;
 }
 /* A relative CRUMB_COORD_ROOT / crumb.coordinationRoot is anchored at the worktree top-level, not the process cwd,
- * and canonicalised (realpath when it exists, else lexically), so the cwd never changes the store. */
+ * and canonicalised (canon_path: realpath of what exists, the rest lexically), so the cwd never changes the store.
+ * An absolute root is used exactly as given unless it has a ".." component, which is canonicalised the same way:
+ * no store path ever carries a "..", and crumb_open refuses one. */
 static char *root_canon(const char *v, const char *top) {
-    if (v[0] == '/') return xstrdup(v);
-    char *j = pjoin(top, v), r[PATH_MAX];
-    if (realpath(j, r)) { free(j); return xstrdup(r); }
-    char *n = norm_path(j + 1);
-    if (!n) return j;
-    size_t an = strlen(n) + 2; char *a = xmalloc(an); xsnprintf(a, an, "/%s", n); free(j); free(n);
-    return a;
+    if (v[0] == '/' && !has_dotdot(v)) return xstrdup(v);
+    char *j = v[0] == '/' ? xstrdup(v) : pjoin(top, v), *c = canon_path(j);
+    free(j);
+    return c;
 }
 static int bool_word(const char *v, const char *what) {   /* git-style boolean; anything else is refused */
     if (!strcmp(v, "1") || !strcmp(v, "true") || !strcmp(v, "yes") || !strcmp(v, "on")) return 1;
@@ -1069,7 +1133,7 @@ static char *target_key(const Plane *p, const char *target, const char *rel) {
 /* directory fsync after a rename or link; best effort normally, fatal in enforcement mode (EINVAL: the filesystem
  * cannot sync directories, which is not a failure to persist) */
 static void fsync_dir(const char *dir) {
-    int fd = open(dir, O_RDONLY);
+    int fd = crumb_open_follow(dir, O_RDONLY | O_DIRECTORY, 0);
     if (fd < 0) { if (g_enforce) die("cannot open directory %s to sync it: %s", dir, strerror(errno)); return; }
     if (fsync(fd) != 0 && g_enforce && errno != EINVAL) die("fsync of directory %s failed: %s", dir, strerror(errno));
     close(fd);
@@ -1097,7 +1161,7 @@ static int root_lock(const char *root, int create) {
     struct stat st;   /* the lock file is a store file too: a planted FIFO, device, symlink or directory is refused */
     if (lstat(lp, &st) == 0) { if (!S_ISREG(st.st_mode)) refuse(lp, kind_of(st.st_mode)); }
     else if (!create) { if (errno == ENOENT) { free(lp); return -1; } if (errno == ENOTDIR) refuse(lp, "has a parent that is not a directory"); die("cannot stat %s: %s", lp, strerror(errno)); }
-    int fd = open(lp, (create ? O_RDWR | O_CREAT : O_RDONLY) | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC, 0644);
+    int fd = crumb_open(lp, (create ? O_RDWR | O_CREAT : O_RDONLY) | O_NONBLOCK, 0644);
     if (fd < 0) {
         if (!create && errno == ENOENT) { free(lp); return -1; }
         if (errno == ELOOP) refuse(lp, "is a symbolic link");
@@ -1309,7 +1373,7 @@ static int agent_has_lock(Txn *t, const char *agent) {
 static void import_legacy(Txn *t) {   /* one-time merge of this worktree's .crumb.local into the shared store */
     Plane *p = t->p;
     if (p->layout == 2) return;   /* layout 2 never imports .crumb.local (plane_require warns when one is present) */
-    char *lp = pjoin(p->abs, ".crumb.local"), *txt = slurp(lp);
+    char *lp = pjoin(p->abs, ".crumb.local"), *txt = read_local(lp);
     if (!txt) return;
     J *l = jparse(txt);
     if (!l || l->t != JOBJ) die("%s is not valid JSON; fix or move it aside", lp);
@@ -1879,7 +1943,7 @@ static void walk_list(const char *path, const char *rel, int depth, int validate
             }
         }
     }
-    if (!validate && !g_skip_local && slurp(lp)) {
+    if (!validate && !g_skip_local && read_local(lp)) {
         Local l = local_open(path);   /* read side: sweep applied in memory, never saved */
         J *sc = jget(l.root, "active_scents"), *lk = jget(l.root, "locks"), *wh = jget(l.root, "whispers");
         if ((sc && sc->n) || (lk && lk->n) || (wh && wh->n)) { t->n_local++; printf("%s\n", rel); show_local(path, l.root, NULL); }
@@ -1981,7 +2045,8 @@ static void lr_add(const char *lane, const char *note, const char *ref, long pr,
     LaneRef *r = &g_lr[g_nlr++]; r->lane = xstrdup(lane); r->note = xstrdup(note); r->ref = xstrdup(ref); r->pr = pr; r->repo = repo ? xstrdup(repo) : NULL; r->sha = sha ? xstrdup(sha) : NULL; r->id = id;
 }
 static void parse_lane_file(const char *path) {
-    FILE *f = fopen(path, "r"); if (!f) return;
+    int lfd = crumb_open_follow(path, O_RDONLY, 0); if (lfd < 0) return;   /* the operator's own report (may be a link) */
+    FILE *f = fdopen(lfd, "r"); if (!f) { close(lfd); return; }
     const char *bn = base_of(path), *fl = strstr(bn, "lane"); char filelane[24] = "";
     if (fl && isdigit((unsigned char)fl[4])) { int k = 0; fl += 4; while (isdigit((unsigned char)*fl) && k < 8) { filelane[k++] = *fl++; } filelane[k] = 0; }
     char *line = NULL; size_t lc = 0; ssize_t len; static int idc = 0; int id;
@@ -2092,7 +2157,7 @@ static void backfill_node(const Node *n, int depth, const char *repo, BfStats *s
 }
 static int cmd_backfill(const char *root, const char *since, int dry) {
     char *r = absdir(root);
-    char *home = getenv("HOME"); if (!home) home = "";
+    char *home = getenv("HOME"); home = home ? canon_dotdot(home) : xstrdup("");
     load_ignore(r);
     Node *tree = scan(r, ".", 1);
     char *remote = run_git(r, "remote get-url origin"), *repo = xstrdup(base_of(remote));
@@ -2188,7 +2253,7 @@ static int cmd_explain(const char *target) {
         size_t tl = strlen(top);
         rel = abs[tl] ? xstrdup(abs + tl + 1) : xstrdup(".");
     } else rel = xstrdup(base_of(abs));
-    char *store = p ? p->store : (env && *env ? env_store(env) : NULL);   /* no repository: env-only identity */
+    char *store = p ? p->store : (env && *env ? env_store(canon_dotdot(env)) : NULL);   /* no repository: env-only identity */
     printf("EXPLAIN %s\n  repository path: %s\n", abs, rel);
 
     /* 1. nearest .crumb */
@@ -2329,7 +2394,11 @@ static void cc_env(Plane *p) {   /* records must land in <coordination root>/con
         setenv("CRUMB_COORD_ROOT", p->root, 1); setenv("CC_STORE", cs, 1); setenv("CRUMB_REPO_ID", p->repo_id, 1);
     } else if (p) setenv("CRUMB_COORD_ROOT", p->store, 1);
     else if (!(env && *env)) die("no repository context: run inside a git checkout or set CRUMB_COORD_ROOT");
-    else { char *st = env_store(env); if (strcmp(st, env)) { char *cs = pjoin(st, "continuations"); setenv("CC_STORE", cs, 1); } }
+    else {   /* a ".." in the root is resolved here (canon_dotdot), for this process and for cc.sh alike */
+        char *rt = canon_dotdot(env), *st = env_store(rt);
+        if (strcmp(rt, env)) setenv("CRUMB_COORD_ROOT", rt, 1);
+        if (strcmp(st, rt)) { char *cs = pjoin(st, "continuations"); setenv("CC_STORE", cs, 1); }
+    }
     char self[PATH_MAX]; ssize_t n = readlink("/proc/self/exe", self, sizeof self - 1);
     if (n > 0 && !getenv("CRUMB_BIN")) { self[n] = 0; setenv("CRUMB_BIN", self, 1); }
 }

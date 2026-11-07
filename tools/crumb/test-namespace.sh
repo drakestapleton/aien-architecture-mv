@@ -542,5 +542,36 @@ rm "$W/continuations/partial.tmp"; rm -f "$T/b8-away/src.json" "$T/b8-away/alice
 r "$V" "$C" store-init .
 [ $RC -eq 0 ] && [ "$(cat "$W/LAYOUT" 2>/dev/null)" = crumb-coord-layout/2 ] && [ ! -e "$W/dirs" ] && [ ! -e "$W/agents" ] && [ ! -e "$W/continuations" ] && [ -d "$W/repos" ] && ok "N29 control: a layout-1 root holding only empty real directories becomes layout 2 (empty trees removed)" || { why; bad "N29 emptied root"; }
 
+# ---- N30 (CodeQL path hardening) one checked opener: .crumb.local is never read through a final symlink ----
+# The RFC-0001 fallback state file and the layout-1 import read it with crumb_open (O_NOFOLLOW): a symbolic link or
+# FIFO there is refused (REFUSED_RECORD, exit 4) and nothing is written; a regular file still works.
+LN="$T/n30-local"; mkdir -p "$LN"; printf '{"schema_version":"1.0.0","locks":{}}\n' > "$T/n30-elsewhere.json"
+ln -s "$T/n30-elsewhere.json" "$LN/.crumb.local"; e0=$(cksum < "$T/n30-elsewhere.json")
+r "$LN" "$C" claim alice . x.c "through a link" 600
+[ $RC -eq 4 ] && herr 'REFUSED_RECORD: .*\.crumb\.local is a symbolic link' && [ -L "$LN/.crumb.local" ] && [ "$(cksum < "$T/n30-elsewhere.json")" = "$e0" ] && ok "N30 a symlinked .crumb.local outside any repository: claim refused (exit 4), the link and its target untouched" || { why; bad "N30 symlinked .crumb.local"; }
+r "$LN" "$C" list .
+[ $RC -eq 4 ] && herr 'REFUSED_RECORD: .*\.crumb\.local is a symbolic link' && ok "N30 crumb list does not read a symlinked .crumb.local either (exit 4)" || { why; bad "N30 list through a link"; }
+rm "$LN/.crumb.local"; mkfifo "$LN/.crumb.local"
+r "$LN" "$C" claim alice . x.c "fifo" 600
+[ $RC -eq 4 ] && herr 'REFUSED_RECORD: .*\.crumb\.local is a fifo' && [ -p "$LN/.crumb.local" ] && ok "N30 a FIFO .crumb.local is refused (exit 4), never opened for a blocking read" || { why; bad "N30 fifo .crumb.local"; }
+rm "$LN/.crumb.local"; cp "$T/n30-elsewhere.json" "$LN/.crumb.local"
+r "$LN" "$C" claim alice . x.c "regular file" 600
+[ $RC -eq 0 ] && [ -f "$LN/.crumb.local" ] && [ ! -L "$LN/.crumb.local" ] && grep -q '"x.c"' "$LN/.crumb.local" && ok "N30 control: a regular .crumb.local still takes the claim (exit 0)" || { why; bad "N30 regular .crumb.local"; }
+mkrepo "$T/n30-repo" https://github.com/acme/n30.git; ln -s "$T/n30-elsewhere.json" "$T/n30-repo/.crumb.local"
+r "$T/n30-repo" "$C" claim alice . src/a.c "import through a link" 600
+[ $RC -eq 4 ] && herr 'REFUSED_RECORD: .*\.crumb\.local is a symbolic link' && [ -z "$(find "$T/n30-repo/.git/crumb/v1" -name '*.json' 2>/dev/null)" ] && [ "$(cksum < "$T/n30-elsewhere.json")" = "$e0" ] && ok "N30 a layout-1 store never imports a symlinked .crumb.local (exit 4, no records written)" || { why; bad "N30 import through a link"; }
+
+# ---- N31 a configured root with a '..' component is canonicalised where it is resolved (no store path carries one) ----
+mkrepo "$T/n31" https://github.com/acme/n31.git; TP=$(cd "$T" && pwd -P)
+r "$T/n31" env CRUMB_COORD_ROOT="$T/n31-missing/../n31root" "$C" store-init .
+[ $RC -eq 0 ] && has "^STORE_INIT $TP/n31root layout crumb-coord-layout/2 " && [ -f "$T/n31root/LAYOUT" ] && [ ! -e "$T/n31-missing" ] && ok "N31 CRUMB_COORD_ROOT=<abs>/n31-missing/../n31root: store-init names the canonical root, n31-missing/ never created" || { why; bad "N31 env root with .."; }
+git -C "$T/n31" config crumb.coordinationRoot "$T/n31/src/../../n31root"
+r "$T/n31" "$C" claim alice . src/a.c "dotdot root" 600; r1=$RC
+r "$T/n31" env CRUMB_COORD_ROOT="$TP/n31root" "$C" check alice . src/a.c
+[ $r1 -eq 0 ] && [ $RC -eq 0 ] && has '^HELD src/a.c by alice ' && ok "N31 control: git config crumb.coordinationRoot <abs>/n31/src/../../n31root is the same store as the canonical root (alice HELD)" || { why; bad "N31 config root with .."; }
+ln -s "$T/n31root" "$T/n31link"; sid=$(cut -d' ' -f2 "$T/n31root/STORE_ID")
+r "$T/n31" env CRUMB_COORD_ROOT="$T/n31link" CRUMB_ENFORCE=1 CRUMB_EXPECT_STORE_ID="$sid" "$C" claim bob . src/b.c "linked root" 600
+[ $RC -eq 0 ] && has 'generation 1' && ok "N31 control: an enforced root named through a symbolic link still works (only a final link of a store file is refused)" || { why; bad "N31 linked root"; }
+
 echo "namespace/check/enforce: $( [ $fail -eq 0 ] && echo ALL PASS || echo FAILURES )"
 exit $fail
