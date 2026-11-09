@@ -21,7 +21,7 @@ remainder as close to the hardware's limit as it allows, and never call a slow r
 ## Rules applied on top of the plan (details in the research note, section 2)
 
 1. Results in SI units: seconds and joules per accepted objective, watts, each beside its physical bound and derivation. Tokens and bytes are supporting facts only.
-2. Track C's primary figure is Turing yield T and T/J against our own previous run; "correctly completed objective" is the acceptance gate underneath.
+2. Track C's primary figure is Turing yield T and T/J against my own previous run; "correctly completed objective" is the acceptance gate underneath.
 3. No durations: the plan's weeks and day numbers are dropped; phases exit by gates in the plan's order.
 4. Papers and outside tools (Nsight, egg, Undermind) are research input only; no published speedup appears in a result; native chip timestamps are the instrument.
 5. Role codes map to models: MATH and REVIEW to Fable or Grok; OMEGA, GPU, AGENT, EXP to Opus, Astra on hard bugs; a different model reviews than built.

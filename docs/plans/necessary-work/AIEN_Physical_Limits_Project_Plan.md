@@ -20,7 +20,7 @@ This plan uses “physics” to mean the scientific discipline. References to th
 
 **The operational commitment:** no unexplained bottleneck is accepted as a physical limit. Every important gap receives an owner, competing explanations, a discriminating experiment, and a next-review condition. Resource limits may defer an investigation; they do not convert ignorance into a theorem.
 
-**The necessary qualification:** we cannot promise that mathematics will become the only obstacle to every possible objective. Missing information, external systems, finite energy and memory, and undecidable or unresolved problems remain relevant. We can make a rigorous, progressively stronger statement for specified task families, hardware, and operating conditions. An unsuccessful search is not an impossibility proof.
+**The necessary qualification:** I cannot promise that mathematics will become the only obstacle to every possible objective. Missing information, external systems, finite energy and memory, and undecidable or unresolved problems remain relevant. I can make a rigorous, progressively stronger statement for specified task families, hardware, and operating conditions. An unsuccessful search is not an impossibility proof.
 
 ## 2. What success means
 
@@ -356,7 +356,7 @@ A complete first-campaign result contains:
 - A bound ledger separating theorems, hardware capacities, attained references, and assumptions.
 - An unresolved-gap list with owners and the next experiment or missing observation.
 
-The claim this earns is specific: **for these objectives, these semantics, and this machine, we have removed the demonstrated unnecessary work and can explain the remaining measured costs to the stated uncertainty.** Where we cannot explain them, the research remains open.
+The claim this earns is specific: **for these objectives, these semantics, and this machine, I have removed the demonstrated unnecessary work and can explain the remaining measured costs to the stated uncertainty.** Where I cannot explain them, the research remains open.
 
 ## 16. Research grounding and source register
 

@@ -110,7 +110,7 @@ https://github.com/aien-spark/benchmarks
 
 Canonical performance/provenance benchmark work should be linked from this repo rather than copied into architecture docs.
 
-Prime Drag Race suite: lives in `aien-spark/benchmarks` under `prime-drag-race/` (contract, runner, receipts). The native GB10 implementation is in `aien-spark/omega` under `bench/prime_race/` (PR #303). Speed is measured against the machine's physical limit, and correctness against our own reference; there is no outside entry. Environment measured so far: Linux-hosted GB10, not Aienux.
+Prime Drag Race suite: lives in `aien-spark/benchmarks` under `prime-drag-race/` (contract, runner, receipts). The native GB10 implementation is in `aien-spark/omega` under `bench/prime_race/` (PR #303). Speed is measured against the machine's physical limit, and correctness against my own reference; there is no outside entry. Environment measured so far: Linux-hosted GB10, not Aienux.
 
 ## Local composition
 

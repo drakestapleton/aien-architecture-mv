@@ -13,7 +13,7 @@ approved path (INTERPLANE -> ComposeApprovedProposal -> daemon ledger); the offl
 the bundle unless a signed evaluation receipt names the exact bytes the ledger says were written and
 the score meets a threshold fixed before the run.
 
-## What the code already gives us
+## What the code already gives me
 
 - **Proposal shape.** `ImprovementProposal` carries one `target_file` and a `proposed_patch`
   (spark-rsi src/models.rs:37). That maps onto one `write_file` effect, the only effect kind the

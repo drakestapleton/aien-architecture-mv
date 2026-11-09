@@ -785,9 +785,9 @@ on a related unseen task.
 All claimed physical measurements are tied to actual hardware evidence.
 ```
 
-If the system merely generates a faster kernel, we have an autotuner.
+If the system merely generates a faster kernel, I have an autotuner.
 
-If it satisfies the entire sequence, we have demonstrated something much closer to bounded empirical self-improvement.
+If it satisfies the entire sequence, I have demonstrated something much closer to bounded empirical self-improvement.
 
 ---
 

@@ -9,7 +9,7 @@
 
 ## In plain words
 
-When something goes wrong, we want to start from a final receipt and walk back to the outside request that caused it, through every subsystem that touched it. Today each subsystem numbers its own work in its own way, and none of those numbers is passed to the next subsystem, so the walk stops at every boundary.
+When something goes wrong, I want to start from a final receipt and walk back to the outside request that caused it, through every subsystem that touched it. Today each subsystem numbers its own work in its own way, and none of those numbers is passed to the next subsystem, so the walk stops at every boundary.
 
 This note fixes three things:
 

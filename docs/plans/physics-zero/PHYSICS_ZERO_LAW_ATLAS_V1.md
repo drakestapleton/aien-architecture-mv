@@ -14,7 +14,7 @@ new Omega object kind. Roadmap anchors are M27 to M35 (protocol, hidden worlds, 
 active experimentation, concept formation, alien worlds, novel regime, novel phenomenon, real lab).
 Rung to milestone mapping here is a proposal. The roadmap is not edited by this document.
 
-Plain-English summary of the idea: we invent small worlds whose laws only an evaluator knows. A
+Plain-English summary of the idea: I invent small worlds whose laws only an evaluator knows. A
 candidate system watches and pokes the world through neutral channels, then writes down a theory. The
 evaluator, which the candidate cannot see, scores the theory on prediction, on surviving new
 experiments, on being compact, and on honestly saying "I found no law" when there is none.

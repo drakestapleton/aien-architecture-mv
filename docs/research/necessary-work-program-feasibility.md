@@ -54,7 +54,7 @@ No GitHub issue for this programme existed before this note (`gh search issues -
 | # | The plan says | The standing rule | Fix carried into the issues |
 |---|---|---|---|
 | 1 | Results in tokens/s, TTFT seconds, bytes | Measure in SI units: seconds, joules, watts per accepted unit of work, next to a physical bound with its derivation; tokens and bytes are supporting facts only (Drake 2026-10-14) [S15] | Every experiment reports s and J per accepted objective and W, with the bound beside it. Token counts stay in the raw receipts. |
-| 2 | Primary unit = "correctly completed objective" | Turing yield T (held-out bits gained) and T/J is the guiding star; the model asks "how do I get more Turing today?" (Drake 2026-10-16) [S16] | Track C's primary figure is T and T/J against our own previous run; "correctly completed objective" stays as the acceptance gate underneath it. The TY-x measurement machinery is not built yet, so until it is, the gate figure is reported alone and labelled. |
+| 2 | Primary unit = "correctly completed objective" | Turing yield T (held-out bits gained) and T/J is the guiding star; the model asks "how do I get more Turing today?" (Drake 2026-10-16) [S16] | Track C's primary figure is T and T/J against my own previous run; "correctly completed objective" stays as the acceptance gate underneath it. The TY-x measurement machinery is not built yet, so until it is, the gate figure is reported alone and labelled. |
 | 3 | 12-week campaign, "first ten working days", 50/25/25 effort split | No estimates without a receipt (Drake 2026-10-16) [S17] | Keep the order, drop the durations. Phases exit by gates, not by weeks. The ten-day table becomes ten ordered work units. |
 | 4 | Literature R1 to R7 and Nsight D1 as grounding | No outside comparisons; outside tools are research or a comparison point, never the plan (Drake 2026-10-16) [S18] | Papers may motivate an experiment; no published speedup appears in any result. Nsight is not used on the native path; the native chip timestamps are the instrument (the plan itself says this). |
 | 5 | Six named roles, author is not sole reviewer | One orchestrator does the work; models by job: Fable for proofs and deep analysis, Opus for everyday building, Astra for targeted bugs, Grok for mathematical verification, Haiku for watching runs (Drake 2026-10-13/18) [S19] | Role codes map to models, not people. MATH and REVIEW = Fable or Grok; OMEGA, GPU, AGENT, EXP = Opus with Astra on hard bugs. "Author is not sole reviewer" is met by a different model reviewing. |
@@ -101,7 +101,7 @@ The plan's 82 tokens/s weight-streaming estimate uses the 273 GB/s specification
 205 to 236 GB/s on this machine [S27]; in SI terms the single-stream decode floor at the measured figure is 14 ms per step for
 3.3 GB of active weights (calc:498ec812) [S28]. The atlas (E10) replaces the specification figure with measured, conditioned ones.
 
-## 5. How to run it under our rules
+## 5. How to run it under my rules
 
 1. **Folder.** `docs/plans/necessary-work/` holds the plan verbatim and a README marked NOT A MASTER PLAN. Sequencing stays in
    `CURRENT_EXECUTION_PLAN.md`; no roadmap row changes [S13].
@@ -116,7 +116,7 @@ The plan's 82 tokens/s weight-streaming estimate uses the 273 GB/s specification
    `docs/inference/evidence/<campaign>/`. The section-10 ledger fields become the README template, with `claim_strength` added
    as its own line: proven_in_scope, measured, inferred, unresolved.
 5. **Reporting.** Each result: seconds and joules per accepted objective, watts, the bound beside it with derivation and calc id,
-   the same figure from our previous run, and the distance to the ceiling. Nothing else is a headline [S15][S20].
+   the same figure from my previous run, and the distance to the ceiling. Nothing else is a headline [S15][S20].
 6. **Review.** A different model reviews than the one that built; Fable or Grok for proofs and bounds [S19]. Results land through
    the PR desk; Spark judges every test [S21].
 7. **Negative results stay.** The prefetch negative [S5] stays on the ledger; a reopening must name the changed premise, as the plan says.

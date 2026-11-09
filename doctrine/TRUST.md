@@ -20,7 +20,7 @@ Status:          AUTHORITATIVE / CANONICAL / RATIFIED
 
 In conventional computing architectures, systems routinely conflate optimization power with operational authority. Compilers are trusted blindly to generate correct machine code; language models are granted direct access to tool APIs; and autotuning frameworks mutate runtime configurations without mathematical bounds. When a component grows sufficiently complex, human engineers abdicate formal verification in favor of empirical hope.
 
-The Sovereign Machine rejects this compromise. In our architecture:
+The Sovereign Machine rejects this compromise. In my architecture:
 1. **Search and Optimization are Untrusted:** The cognitive engine (Aien), large language models, reinforcement learning policies, equality-saturation e-graph rewrites, heuristic autotuners, and program synthesizers operate exclusively on the untrusted side of the epistemic boundary. They are creative generators of candidate hypotheses, never arbiters of truth.
 2. **Correctness is Strictly Trusted:** Semantic specifications (Omega), verification kernels, capability checkers (AEGIS), and physical admission controllers (Physics) operate exclusively on the trusted side of the boundary. They are deterministic, inspectable, and mathematically sound arbiters of reality.
 3. **Soundness Outlives Intelligence:** If the cognitive engine hallucinates, mischaracterizes hardware, synthesizes malicious machine instructions, encounters catastrophic memory corruption, or suffers complete adversarial compromise, the Sovereign Machine remains sound, safe, and recoverable.

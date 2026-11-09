@@ -14,8 +14,8 @@ run). Claims are tagged [OBSERVED path] (read in the code), [DOCUMENTED path]
 | Commit read | `548091836760a67e331b8f5643be8e5c08fae1e6` (2026-10-18) |
 | Licence | MIT, Copyright (c) 2025 Nous Research. Rewrites are allowed; keep the credit line. |
 | Language | Python (9,836 files, about 2.4 M lines, 1.47 M of them tests) |
-| Our copy | `~/workspace/investigations/2026-10-18-hermes-agent/upstream` on the Spark, with `PINS` and scout notes in `notes/` beside it |
-| Prior mentions on our side | none outside the archived Odysseus fork (org-check receipt `org:8d23a45c210a`) |
+| My copy | `~/workspace/investigations/2026-10-18-hermes-agent/upstream` on the Spark, with `PINS` and scout notes in `notes/` beside it |
+| Prior mentions on my side | none outside the archived Odysseus fork (org-check receipt `org:8d23a45c210a`) |
 
 Hermes is a general chat and messaging agent harness: a loop around a hosted or
 local language model with tools, skills, memory files, a messaging gateway for
@@ -28,8 +28,8 @@ Aien) is also becoming, which is why the comparison is worth making.
 Architecture and agent-loop guides read first-hand; the four large subsystems
 (agent core; memory, skills, learning; tools, approvals, delegation; gateway,
 cron, state) were each read by one scout against written questions, with
-file:line citations, and the judgment below is the orchestrator's. Our own side
-was checked with `org-check` before any "we lack this" claim.
+file:line citations, and the judgment below is the orchestrator's. My own side
+was checked with `org-check` before any "I lack this" claim.
 
 ## 1. Context compression: the clearest lesson
 
@@ -44,7 +44,7 @@ verbatim, never splits a tool call from its result, and writes a structured
 summary (goal, constraints, progress, decisions, files, next steps). Each
 compression starts a child session lineage.
 
-**Micro-compaction** is the part we do not have. It is opt-in in Hermes (off by
+**Micro-compaction** is the part I do not have. It is opt-in in Hermes (off by
 default, because each pass breaks the prompt-cache prefix). When on, after every normal turn it
 absorbs exactly one *exchange* (one assistant turn with its tool results) into
 a single rolling summary. Properties the code enforces:
@@ -79,10 +79,10 @@ session, with a deterministic fallback summary route when the summarizer stalls
 twice, and commits through a lease, fence and watermark so two compactions
 cannot interleave.
 
-**What we have today.** The sovereign core already has a conversation compactor
+**What I have today.** The sovereign core already has a conversation compactor
 (`crates/aien-cli/src/compaction.rs`, issue 397 there): tool-aware groups,
 unsafe-boundary refusal, and durable originals with digests written before the
-list changes, with replay. Hermes does not have that last property. We lack:
+list changes, with replay. Hermes does not have that last property. I lack:
 the one-exchange-per-turn bounded pass, the never-summarize-the-user rule, the
 transcript-recovered cursor, the rolling summary with defrag, the atomic store
 swap, and evidence-anchored token accounting. (org-check receipt
@@ -132,9 +132,9 @@ tools/skill_manager_tool.py, tools/skill_ledger.py]:
   inactivity state machine: active, stale after 14 days, archived after 30,
   with exemptions for pinned and cron-referenced skills.
 
-**What we have today.** Cortex (omega) is an append-only lessons and sources
+**What I have today.** Cortex (omega) is an append-only lessons and sources
 memory with recall; the Skill Router and Capability Graph are host-side omega
-modules; skills on the Spark are Claude Code skills. We have no mechanism by
+modules; skills on the Spark are Claude Code skills. I have no mechanism by
 which the agent itself distils a run into a skill under an editorial policy,
 no skill ledger with rollback, and no use-driven skill ageing.
 
@@ -167,7 +167,7 @@ agent/turn_truncation.py, tools/budget_config.py].
   trajectory with one summary turn. Whether any released model was trained on
   this data is UNKNOWN from the tree.
 
-**What we have today.** The sovereign core chat loop has hooks and the
+**What I have today.** The sovereign core chat loop has hooks and the
 compactor; it has no persist-before-act rule, no batch planner with path
 reservations, and no one-shot recovery ledger (not checked by org-check;
 stated from the sc#397 inventory, which lists the loop's entry points).
@@ -210,7 +210,7 @@ hermes_platform/].
 - **Machine facts take no environment-variable input**; hardware recognisers
   are table-driven from OS-reported identity (the GB10 is in that table).
 
-**What we have today.** aegis-runtime has a WebSocket gateway and a heartbeat
+**What I have today.** aegis-runtime has a WebSocket gateway and a heartbeat
 scheduler but no delivery ledger and no at-most-once cron discipline (its
 README and source list neither). The hive's forge queue and lanes ledger are
 shell-level. Synapse has revisions and recovery for changesets, not for
@@ -246,19 +246,19 @@ tools/code_kernel.py, tools/budget_config.py, agent/tool_executor.py].
   sizes (100k per result, 200k per turn, 50k for MCP, spilled to files, head
   40 % and tail 60 % kept). No hard cost or token budget was found.
 
-**What we have today.** Capability-bounded, receipt-producing effects are
+**What I have today.** Capability-bounded, receipt-producing effects are
 Omega doctrine (SMART is not TRUSTED), ARGUS is the defensive plane, and
 INTERPLANE holds an action for a person when untrusted content is in view.
-What we lack is the ordering rule as code (floors first, then modes, with the
+What I lack is the ordering rule as code (floors first, then modes, with the
 operator's deny list outranking everything) and a file rollback that keeps
 the agent's writes apart from the operator's.
 
 ## 6. Judgment: what is worth rewriting, in which language, and where
 
 The principles below are the ones that are both unusual in Hermes and absent
-on our side. Each becomes one issue; the issue carries the credit line.
+on my side. Each becomes one issue; the issue carries the credit line.
 
-| # | Principle (Hermes mechanic) | Why it is worth ours | Lands in |
+| # | Principle (Hermes mechanic) | Why it is worth making mine | Lands in |
 |---|---|---|---|
 | 1 | Bounded micro-compaction: never summarize the operator; one exchange per turn; transcript-recovered cursor; rolling summary with defrag; atomic store swap; evidence-anchored token accounting | Direct fit with "no guessing": provider usage is a receipt, an estimate is not. Extends sc#397 instead of replacing it | aien-sovereign-core (`aien` chat loop) |
 | 2 | Persist-before-act turn discipline; byte-identical replay sidecar; one-shot recovery flags; never run a truncated tool call | Same idea as Aienux continuity commits (advance the record, then act), applied to the chat loop | aien-sovereign-core |
@@ -275,7 +275,7 @@ ledger) is written as a content-addressed, effect-free module with a stated
 interface, so it can be carried into Omega as a semantic identity later; only
 the edges (SQLite, sockets, files) stay host Rust.
 
-**Not worth rewriting** (ordinary, or already ours): the three API modes and
+**Not worth rewriting** (ordinary, or already mine): the three API modes and
 provider adapters, the 27 messaging platforms, the Python package manager,
 the browser and computer-use stacks, the TUI, and the mixture-of-agents
 provider. The environment-generation idea in the package manager and the
@@ -288,22 +288,22 @@ the MIT licence and the commit read. If any text is carried over verbatim
 (for example a prompt rule), the MIT notice goes into that repository's
 NOTICE file.
 
-## 7. If we move onto Hermes as the day-to-day harness
+## 7. If I move onto Hermes as the day-to-day harness
 
 Drake raised a transfer to Hermes on 2026-10-18. What the tree says a transfer
 needs [DOCUMENTED README.md, website/docs/user-guide/which-file-does-what.md;
 OBSERVED agent/prompt_builder.py, tools/memory_tool_store.py]:
 
-| Our asset today | Hermes equivalent | Caveat |
+| My asset today | Hermes equivalent | Caveat |
 |---|---|---|
 | `~/.claude/CLAUDE.md`, `AGENTS.md` | `AGENTS.md` and project files in the context tier; `SOUL.md` for identity | project files are capped per file; order is SOUL, guidance, pinned skills, then project files |
-| Memory directory (over 100 files) | `MEMORY.md` (2,200 characters) and `USER.md` (1,375) | will not fit; needs an external memory provider, which is where our Cortex could plug in |
+| Memory directory (over 100 files) | `MEMORY.md` (2,200 characters) and `USER.md` (1,375) | will not fit; needs an external memory provider, which is where my Cortex could plug in |
 | Claude Code skills | `skills/<name>/SKILL.md` with a 60-character description | the model, not a matcher, chooses skills from the index |
 | Hooks (manual-guard, docs-guard, chat-size) | gateway hooks and observer hooks, middleware | hooks are gateway-side; CLI-side enforcement is thinner |
 | Subagents | the delegate tool (in-process threads) | defaults differ between docs and code |
 | MCP servers | `optional-mcps` and the MCP tool | OAuth sessions handled in the TUI gateway |
 | Cron jobs on the Spark | Hermes cron (at-most-once, see section 4) | jobs run as gateway sessions |
-| Python rule | Hermes is Python end to end | it would be an outside tool we use, not part of the trusted base |
+| Python rule | Hermes is Python end to end | it would be an outside tool I use, not part of the trusted base |
 
 ## 8. Limits of this note
 

@@ -101,7 +101,7 @@ Every step names who does it. A step may start only after the step before it is 
 
 ## 5. The owner signing step (S8), written for Drake
 
-**Where we are when this step comes up.** The exam's hidden test data is prepared and locked away. A small text file (the commitment record, about eight lines) holds its fingerprint. Nothing about AIEN's exam run has started. The orchestrator shows you the one-page summary from step S7.
+**Where things stand when this step comes up.** The exam's hidden test data is prepared and locked away. A small text file (the commitment record, about eight lines) holds its fingerprint. Nothing about AIEN's exam run has started. The orchestrator shows you the one-page summary from step S7.
 
 **What you are deciding.** Whether to put your owner signature on that record. Signing says: "I approve this sealed envelope, and it existed before any exam run."
 

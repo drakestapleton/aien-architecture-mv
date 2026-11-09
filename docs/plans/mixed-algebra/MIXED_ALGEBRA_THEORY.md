@@ -9,7 +9,7 @@ Evidence legend used throughout:
 - **[PROOF]** derived in this document.
 - **[GROK]** independently checked by Grok (see Appendix A for agreement record).
 - **CONJECTURE** not proven; must not be relied on without a gate.
-- **PARAM** an example parameter, not a measured property of our hardware.
+- **PARAM** an example parameter, not a measured property of my hardware.
 
 Notation: `T` denotes the balanced-ternary digit -1. Digit strings are written most significant digit first. `Q(x) = P(Z > x)` for standard normal `Z`. `u` is unit roundoff of a float format.
 
@@ -126,7 +126,7 @@ Cost model: representing numbers up to `N` in radix `b` needs `ceil(log_b N)` di
 - `2 / ln 2 = 2.885390`, `3 / ln 3 = 2.730718`, `e = 2.718282`.
 - Ratio `(3/ln3)/(2/ln2) = 0.946395`: ternary is about 5.4 percent cheaper under this model.
 
-Caveat, stated plainly: this is a cost model about **digit hardware whose cost scales linearly with radix**. It does not apply to binary CMOS, where a stored trit costs two bits (bitplanes) or `log2 3 = 1.584963` bits at best (packed), and where a ternary operation is realized with binary gates. On our silicon the relevant quantities are bits moved and gates switched, covered in Sections 3 and 4. Radix economy is not an argument for ternary on the Spark.
+Caveat, stated plainly: this is a cost model about **digit hardware whose cost scales linearly with radix**. It does not apply to binary CMOS, where a stored trit costs two bits (bitplanes) or `log2 3 = 1.584963` bits at best (packed), and where a ternary operation is realized with binary gates. On my silicon the relevant quantities are bits moved and gates switched, covered in Sections 3 and 4. Radix economy is not an argument for ternary on the Spark.
 
 Storage density: `log2 3 = 1.584963` bits per trit. Packing 5 trits per byte (`3^5 = 243 <= 256`) uses 1.6 bits per trit, efficiency `5 log2 3 / 8 = 0.990602`.
 
@@ -283,7 +283,7 @@ Storing indices of nonzeros (separate `+` and `-` lists so the sign is free), by
 - Lower bound on any encoding: entropy `H(rho) = h(rho) + rho` bits per weight with `P(0) = 1 - rho`, `P(+1) = P(-1) = rho/2` [ENUM]: 0.569 bits at `rho = 0.1`, 1.061 at 0.25, 1.500 at 0.5, 1.585 (= `log2 3`) at `rho = 2/3`.
 - Compute side: index lists turn streaming loads of `x` into gathers. For GEMV `x` is `n` bytes and typically cache-resident, so gathers hit cache; for large `n` or batch they do not. CONJECTURE: the sparse realization is only worth gating below about 10 percent density on this CPU.
 
-Measured density of real ternary models is prior art to verify (for example Ma et al. 2024, "The Era of 1-bit LLMs: All Large Language Models are in 1.58 Bits", reports ternary weights; the zero fraction must be measured on our own checkpoints).
+Measured density of real ternary models is prior art to verify (for example Ma et al. 2024, "The Era of 1-bit LLMs: All Large Language Models are in 1.58 Bits", reports ternary weights; the zero fraction must be measured on my own checkpoints).
 
 ---
 

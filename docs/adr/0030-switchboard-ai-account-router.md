@@ -1,4 +1,4 @@
-# ADR 0030: Switchboard, one typed router over our own AI accounts
+# ADR 0030: Switchboard, one typed router over my own AI accounts
 
 **Status:** PROPOSED, 2026-10-03. Not yet reviewed by the operator, Drake Stapleton.
 **Number:** 0030 was the next free number on 2026-10-03; no open PR claimed it.

@@ -8,7 +8,7 @@
 
 **Written:** 2026-09-28.
 
-**Why this exists.** On 2026-09-27 Drake decided: no Rust anywhere, Aienux included. Everything comes from our own lineage, and existing Rust gets rewritten. On 2026-09-28 he agreed the target language is C, with hand-written assembly only where a measurement shows it is faster. This document proposes *how* to get there without breaking what already works.
+**Why this exists.** On 2026-09-27 Drake decided: no Rust anywhere, Aienux included. Everything comes from my own lineage, and existing Rust gets rewritten. On 2026-09-28 he agreed the target language is C, with hand-written assembly only where a measurement shows it is faster. This document proposes *how* to get there without breaking what already works.
 
 **Words used below:**
 
@@ -220,10 +220,10 @@ These are open. Each needs Drake's call or more measurement before work starts.
 Status 2026-10-01 (Lane 33 reconciliation, recorded from merged code, not a new decision): item 1 was taken in practice as bottom-up (crypto `aien-dev/aienux#183`, Store `#190`/`#191`, then the C kernel `#194` to `#204`; C boot loader not started), under Drake's standing "go with the recommendation" rule. Item 2 was executed by `aien-dev/aienux#188` (`913b962`, own Ed25519 + SHA-512 in C, RFC 8032 vectors). Items 3 to 8 are unchanged. See `CURRENT_EXECUTION_PLAN.md` §2, Lane 33 addendum.
 
 1. **Order inside aienos.** boot → kernel → store → crypto (as briefed, needs temporary C-calls-Rust bridges), or crypto → store → kernel → boot (bottom-up, no bridges, boot last).
-2. **Ed25519 signatures.** Today they come from vendored outside code (`ed25519-dalek`). Writing our own Ed25519 in C is security-critical work that needs its own test plan: RFC 8032 vectors, plus a differential check against the current code.
-3. **BLAKE3 in Crumb v1.** Either write BLAKE3 in C ourselves, or switch Crumb to a hash we already own (SHA-256 in aienos-crypto). Switching changes every digest, including `golden_registry_digest.txt`, so it is a format version bump, not a port.
-4. **uuid v7 and JSON in Crumb v1.** Replace them with our own small encoders, or change the formats. Same trade-off as BLAKE3.
-5. **UEFI in C versus assembly.** There is a parked proposal to write the boot program in AArch64 assembly through our own byte-writer. This plan assumes C for boot. Which one applies is not decided.
+2. **Ed25519 signatures.** Today they come from vendored outside code (`ed25519-dalek`). Writing my own Ed25519 in C is security-critical work that needs its own test plan: RFC 8032 vectors, plus a differential check against the current code.
+3. **BLAKE3 in Crumb v1.** Either write BLAKE3 in C myself, or switch Crumb to a hash I already own (SHA-256 in aienos-crypto). Switching changes every digest, including `golden_registry_digest.txt`, so it is a format version bump, not a port.
+4. **uuid v7 and JSON in Crumb v1.** Replace them with my own small encoders, or change the formats. Same trade-off as BLAKE3.
+5. **UEFI in C versus assembly.** There is a parked proposal to write the boot program in AArch64 assembly through my own byte-writer. This plan assumes C for boot. Which one applies is not decided.
 6. **aienos host crates** (aegis, agent-state, cortex, c1-tree, 4,646 lines): port or retire.
 7. **The rest of sovereign-core** (about 82,000 lines after crumbs). No order is proposed. Much of it (spark-* services, aien-cli, inference ABI) may be retired rather than ported, and that needs a per-crate review first.
 8. **The ~20 other aien-dev Rust repositories.** Not inventoried and not ordered.

@@ -4,12 +4,12 @@ Status: RECORD (not a plan, not a charter). Written 2026-10-10 after Drake close
 
 The four classes follow the research goal's own wording:
 
-- **Established mathematics**: theorems and constructions in the literature or provable by hand; true independently of our software.
-- **Computational demonstrations**: things our code did, graded by our evaluator and reviewer, on named machines and commits. These are statements about software conformance to a specification.
+- **Established mathematics**: theorems and constructions in the literature or provable by hand; true independently of my software.
+- **Computational demonstrations**: things my code did, graded by my evaluator and reviewer, on named machines and commits. These are statements about software conformance to a specification.
 - **Experimental physics**: measurements of nature. This program has none.
 - **Unverified hypotheses**: statements the program was motivated by or points toward, with no evidence either way from this work.
 
-## 1. Established mathematics (true regardless of our code)
+## 1. Established mathematics (true regardless of my code)
 
 | item | statement | source |
 |---|---|---|
@@ -18,7 +18,7 @@ The four classes follow the research goal's own wording:
 | M3 | For a two-level clock with energies `E = (-3, 3)`, `H_S = 5 Z`, clock-pair hopping `V = g(|E0><E1| + h.c.) (x) Z` with `g = 4`, and `psi_0 = (1, 1)`: the kernel projection gives reading probabilities `p(t0) = 1/10`, `p(t1) = 9/10`; `P(Z+ | t) = 1/2` at both readings (equal to the ideal value, because `Z` commutes with `H`); `P(X+ | t1) = 0` against the ideal `3/4`. Exact rationals, machine-checked. | omega#371 correction comment 6097916958 (std-only Rust, i128 rationals, program inline). This replaces the hand-derived numbers in the AT-2 candidate note (41/50, 9/50, 1/82), which were wrong. |
 | M4 | Semantic identity by hashing exact rational text, with computed binary64 values carried as evidence and never as identity, makes the identifier independent of platform rounding by construction. | `AT0_RESULT_V2.md`, `AT1_RESULT_V1.md` section 6; a definitional property of the contract, not an empirical finding. |
 
-## 2. Computational demonstrations (what our software did, on named commits and machines)
+## 2. Computational demonstrations (what my software did, on named commits and machines)
 
 All entries are software conformance to `AT0_SPEC.md` or `AT1_SPEC.md`. None is a statement about nature. Grades are Agent 6's (`AT0_RESULTS.md`, `AT1_RESULTS.md`).
 
