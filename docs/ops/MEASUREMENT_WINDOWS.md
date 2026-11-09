@@ -117,10 +117,19 @@ and its log in `~/yardsticks/build-once.log`.
 
 - **The quiet lock.** The hive already had one rule for keeping the box quiet: builds share
   `/tmp/aien-quiet.lock` through `quiet-build`, a measurement takes it alone through `quiet-measure`.
-  A window is a long-running `quiet-measure`: a small holder process takes the lock alone and keeps it
-  until you close the window or the lease runs out. Inside the window `quiet-measure` sees its own
-  window and runs your command straight away instead of waiting on its own lock.
-- **Getting both locks without starving (L154, L189, L322).** The window waits for the GPU lock
+  L217: `quiet-measure flock LOCKFILE ...` takes LOCKFILE first and the quiet lock second. The old order
+  held the quiet lock exclusive while queued for the GPU, so every build waited behind a measurement
+  that was not measuring (2026-10-20: more than an hour, dozens of builds). The want flag is raised
+  only once LOCKFILE is held. With LOCKFILE held it waits at the gate for at most `SPARK_DRAIN_MAX`
+  seconds (default 300) and then passes it. If the quiet lock does not drain within another
+  `SPARK_DRAIN_MAX` seconds, or a process queued on LOCKFILE has the quiet lock open, the measurement
+  lets LOCKFILE go and queues again. A measurement killed while it queues for LOCKFILE exits without
+  running its command. A command that does not start with `flock` still takes the quiet lock first.
+  `tools/ops/test-quiet-lock-order.sh` replays the starvation on scratch locks. A window is a
+  long-running `quiet-measure`: a small holder process takes the lock alone
+  and keeps it until you close the window or the lease runs out. Inside the window `quiet-measure`
+  sees its own window and runs your command straight away instead of waiting on its own lock.
+- **Getting both locks without starving (L154, L189, L322, L217).** The window waits for the GPU lock
   holding nothing, so it never blocks CPU timings while it queues. Once it has the GPU lock it keeps it
   and raises a gate (`/tmp/aien-quiet.gate`): new `quiet-build` and `quiet-measure` callers wait outside
   while the ones already holding the quiet lock finish (L322: without the gate, shared takers kept
@@ -128,8 +137,9 @@ and its log in `~/yardsticks/build-once.log`.
   lets everything go and waits for a quiet machine again (L405). If a process waiting for the GPU lock
   holds the quiet lock, the window lets the GPU lock go (gate stays up), waits for the quiet lock, then
   tries the GPU lock without blocking while keeping the quiet lock it won (L189: letting a won quiet
-  lock go starved the window for hours). `--quiet none` takes the GPU lock only, for checks that
-  compare values, never speeds.
+  lock go starved the window for hours). A flock-form measurement now uses the same order as the window
+  (chip, then quiet). The window's guard stays, for an old-order caller or a build whose command takes
+  the chip. `--quiet none` takes the GPU lock only, for checks that compare values, never speeds.
 - **The GPU lock.** `/tmp/aien-gb10.lock` is separate. The calibration holds it for its minute of
   probing and idling so the GPU stays idle. The baseline does not hold it, because the 27B server takes
   that lock itself for every reply; holding it would make the server wait on us forever. Programs that
