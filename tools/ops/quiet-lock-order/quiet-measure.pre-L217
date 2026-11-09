@@ -1,0 +1,44 @@
+#!/bin/sh
+# 2026-10-20: commands are pinned to the X925 cores; old copy quiet-measure.bak-20261020.
+# quiet-measure CMD...  Run a timing measurement with the box as quiet as possible.
+# Raises a "wanted" flag so quiet-build stops starting new builds, then takes
+# /tmp/aien-quiet.lock exclusive (waits for running builds to drain), after passing the gate
+# /tmp/aien-quiet.gate (held by a window waiting at the front of the line; fail open after 25 min; L322).
+# Plain flock alone starves measurements: new shared holders keep arriving.
+# Inside a measurement window (SPARK_WINDOW set by spark-window run, and that
+# window is the open one with a live holder) the lock is already held
+# exclusive for us, so CMD runs directly instead of waiting on our own lock.
+# L405: a measurement holding the lock past 25 min no longer stops builds; they run beside it and it warns.
+# Fast cores for timing (Cortex-X925: 5-9,15-19); builds live on the A725 cores. Builds running at start are logged.
+case "${1-}" in
+  ""|-h|--help|help)
+    sed -n '2,/^[^#]/{/^#/s/^# \{0,1\}//p}' "$0"
+    exit 0 ;;
+  -*)
+    echo "$(basename "$0"): unknown option '$1' (the first argument must be the command to run; try --help)" >&2
+    exit 2 ;;
+esac
+L=$HOME/.local/state/quiet; mkdir -p "$L"
+printf '%s builds_running=%s %s\n' "$(date -u +%FT%TZ)" "$(ls /tmp/aien-build.active.d 2>/dev/null | wc -l)" "$*" >> "$L/measure-overlap.log"
+PIN="taskset -c 5-9,15-19"
+if [ -n "${SPARK_WINDOW:-}" ]; then
+  WR=${SPARK_WINDOWS_ROOT:-$HOME/yardsticks/windows}
+  if [ "$(cat "$WR/OPEN" 2>/dev/null)" = "$SPARK_WINDOW" ] && [ -f "$WR/$SPARK_WINDOW/held" ] &&
+     kill -0 "$(cat "$WR/$SPARK_WINDOW/holder.pid" 2>/dev/null)" 2>/dev/null; then
+    exec $PIN "$@"
+  fi
+  echo "quiet-measure: window $SPARK_WINDOW is not open and held; taking the quiet lock the normal way" >&2
+fi
+W=${SPARK_QUIET_WANT:-/tmp/aien-quiet.want.d}; Q=${SPARK_QUIET_LOCK:-/tmp/aien-quiet.lock}; GATE=${SPARK_QUIET_GATE:-/tmp/aien-quiet.gate}
+mkdir -p "$W" 2>/dev/null; chmod 1777 "$W" 2>/dev/null
+f="$W/$$"; echo "$(date -u +%FT%TZ) $*" > "$f"
+trap 'rm -f "$f"' EXIT INT TERM
+[ -e "$GATE" ] || { : > "$GATE"; chmod 666 "$GATE"; } 2>/dev/null
+flock -s -w "${SPARK_GATE_WAIT:-1500}" "$GATE" true 2>/dev/null   # fail open
+# L405: correctness jobs stop waiting after their cap (25 min) and run beside us; say so, so the numbers are labelled.
+tsf="$W/.$$.held"
+flock -x "$Q" sh -c 'date -u +%FT%TZ > "$0"; exec "$@"' "$tsf" $PIN "$@"; rc=$?
+ts=$(cat "$tsf" 2>/dev/null); rm -f "$tsf"
+n=$( [ -n "$ts" ] && awk -v t="$ts" '$1 >= t' "$L/intrusions.log" 2>/dev/null | wc -l || echo 0)
+[ "${n:-0}" -gt 0 ] && echo "quiet-measure: $n correctness job(s) ran beside this measurement after waiting their cap; label its numbers 'shared machine' (L405)" >&2
+exit $rc

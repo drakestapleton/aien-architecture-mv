@@ -1,9 +1,11 @@
 #!/bin/sh
 # 2026-10-20: commands are pinned to the X925 cores; old copy quiet-measure.bak-20261020.
 # quiet-measure CMD...  Run a timing measurement with the box as quiet as possible.
-# Raises a "wanted" flag so quiet-build stops starting new builds, then takes
-# /tmp/aien-quiet.lock exclusive (waits for running builds to drain), after passing the gate
-# /tmp/aien-quiet.gate (held by a window waiting at the front of the line; fail open after 25 min; L322).
+# L217: if CMD starts with "flock LOCKFILE ...", take LOCKFILE first while holding nothing,
+# then raise the want flag, pass the gate, and take /tmp/aien-quiet.lock exclusive.
+# Waiting for the GPU must not freeze every build. Any other CMD still raises the want
+# flag first, passes the gate /tmp/aien-quiet.gate (held by a window at the front of the
+# line; fail open after 25 min; L322), then takes the quiet lock exclusive.
 # Plain flock alone starves measurements: new shared holders keep arriving.
 # Inside a measurement window (SPARK_WINDOW set by spark-window run, and that
 # window is the open one with a live holder) the lock is already held
@@ -31,13 +33,94 @@ if [ -n "${SPARK_WINDOW:-}" ]; then
 fi
 W=${SPARK_QUIET_WANT:-/tmp/aien-quiet.want.d}; Q=${SPARK_QUIET_LOCK:-/tmp/aien-quiet.lock}; GATE=${SPARK_QUIET_GATE:-/tmp/aien-quiet.gate}
 mkdir -p "$W" 2>/dev/null; chmod 1777 "$W" 2>/dev/null
-f="$W/$$"; echo "$(date -u +%FT%TZ) $*" > "$f"
-trap 'rm -f "$f"' EXIT INT TERM
-[ -e "$GATE" ] || { : > "$GATE"; chmod 666 "$GATE"; } 2>/dev/null
-flock -s -w "${SPARK_GATE_WAIT:-1500}" "$GATE" true 2>/dev/null   # fail open
+# L217: chip first, quiet lock second. GPU timings are run as "quiet-measure flock /tmp/aien-gb10.lock CMD".
+# The old order took the quiet lock EXCLUSIVE and then queued for the chip inside it, so every build on the
+# box waited behind a measurement that was itself only waiting for the GPU (2026-10-20: 65+ min, 26 builds;
+# again 21:20Z and 21:30Z). For CMD = flock [-x|-e|-s|-n|-o|-w SECS|--] LOCKFILE CMD... we now take LOCKFILE
+# first while holding nothing else (no want flag, no quiet lock), then raise the flag, pass the gate and drain
+# the quiet lock with the chip in hand: the same order as spark-window. Two locks must never wait on each
+# other, so while draining we let the chip go and start over when a process queued on the chip has the quiet
+# lock open (an old-order measurement, a build whose CMD takes the chip) or when the drain passes
+# SPARK_DRAIN_MAX s (default 300, as spark-window). With the chip in hand the gate is also waited for at most
+# SPARK_DRAIN_MAX s, then passed (fail open). LOCKFILE stays held while CMD runs (fd 9, passed to CMD
+# like flock(1) does; with -o CMD does not get it, the lock is still held for CMD's life). Other flock forms
+# (-c, combined flags, -E, a directory) and LOCKFILE = the quiet lock itself keep the old path below.
+rl_parse() {
+  [ "${1-}" = flock ] || return 1
+  shift; RN=1; rmode=-x; rnb=; rwait=; rclose=
+  while [ $# -gt 0 ]; do
+    case $1 in
+      -x|-e|--exclusive) rmode=-x ;;
+      -s|--shared) rmode=-s ;;
+      -n|--nb|--nonblock) rnb=1 ;;
+      -o|--close) rclose=1 ;;
+      -w|--wait|--timeout) [ $# -ge 2 ] || return 1
+        case $2 in ''|*[!0-9.]*) return 1 ;; esac
+        rwait=$2; shift; RN=$((RN + 1)) ;;
+      --) shift; RN=$((RN + 1)); break ;;
+      -*) return 1 ;;
+      *) break ;;
+    esac
+    shift; RN=$((RN + 1))
+  done
+  [ $# -ge 2 ] || return 1
+  case $2 in -c|--command) return 1 ;; esac
+  [ -d "$1" ] && return 1
+  RL=$1; RN=$((RN + 1))
+  [ -e "$RL" ] || : >> "$RL" 2>/dev/null || return 1
+  [ -r "$RL" ] || return 1
+  [ "$RL" -ef "$Q" ] && return 1
+  return 0
+}
+# chip_waiter_holds_quiet: some process queued on LOCKFILE has the quiet lock file open (spark-window's guard)
+chip_waiter_holds_quiet() {
+  cino=$(stat -c %i "$RL" 2>/dev/null) || return 1
+  qpath=$(readlink -f "$Q" 2>/dev/null) || return 1
+  for p in $(awk -v i="$cino" '$2=="->" { split($7, a, ":"); if (a[3] == i) print $6 }' /proc/locks 2>/dev/null); do
+    for fd in /proc/$p/fd/*; do [ "$(readlink "$fd" 2>/dev/null)" = "$qpath" ] && return 0; done
+  done
+  return 1
+}
+if rl_parse "$@"; then
+  all="$*"; shift "$RN"
+  # a TERM or INT ends us: a measurement killed while queued for the chip must not run CMD once it gets it
+  f="$W/$$"; trap 'rm -f "$f"' EXIT; trap 'exit 130' INT; trap 'exit 143' TERM
+  [ -e "$GATE" ] || { : > "$GATE"; chmod 666 "$GATE"; } 2>/dev/null
+  [ -e "$Q" ] || { : > "$Q"; chmod 666 "$Q"; } 2>/dev/null
+  rf=$rmode; [ -n "$rnb" ] && rf="$rf -n"; [ -n "$rwait" ] && rf="$rf -w $rwait"
+  exec 9<"$RL"
+  DRAIN=${SPARK_DRAIN_MAX:-300}; tries=0
+  while :; do
+    tries=$((tries + 1))
+    # 1. LOCKFILE, holding nothing else: builds keep running while we queue for the chip
+    flock $rf 9 || { echo "quiet-measure: could not take $RL (flock $rf)" >&2; exit 1; }
+    # 2. only now say a measurement is waiting, and pass the gate: with the chip in hand at most DRAIN s, then fail open
+    echo "$(date -u +%FT%TZ) $all" > "$f"
+    flock -s -w "$DRAIN" "$GATE" true 2>/dev/null
+    # 3. drain the quiet lock with the chip in hand, bounded, with the deadlock guard
+    exec 8<"$Q"; ds=$(date +%s); got=0; why="did not drain in ${DRAIN}s"
+    while [ $(( $(date +%s) - ds )) -lt "$DRAIN" ]; do
+      flock -x -w 5 8 && { got=1; break; }
+      if chip_waiter_holds_quiet; then why="a process queued on $RL holds the quiet lock open"; break; fi
+    done
+    [ "$got" = 1 ] && break
+    exec 8<&-; rm -f "$f"; flock -u 9
+    printf '%s pid=%s try=%s let %s go: %s | %s\n' "$(date -u +%FT%TZ)" "$$" "$tries" "$RL" "$why" "$all" | cut -c1-300 >> "$L/measure-yields.log" 2>/dev/null
+    echo "quiet-measure: let $RL go and queued again: the quiet lock $why (try $tries)" >&2
+    [ -n "$rnb" ] && { echo "quiet-measure: -n given, not retrying" >&2; exit 1; }
+    sleep 1
+  done
+  tsf="$W/.$$.held"; date -u +%FT%TZ > "$tsf"
+  if [ -n "$rclose" ]; then $PIN "$@" 9<&-; else $PIN "$@"; fi; rc=$?
+else
+  f="$W/$$"; echo "$(date -u +%FT%TZ) $*" > "$f"
+  trap 'rm -f "$f"' EXIT INT TERM
+  [ -e "$GATE" ] || { : > "$GATE"; chmod 666 "$GATE"; } 2>/dev/null
+  flock -s -w "${SPARK_GATE_WAIT:-1500}" "$GATE" true 2>/dev/null   # fail open
+  tsf="$W/.$$.held"
+  flock -x "$Q" sh -c 'date -u +%FT%TZ > "$0"; exec "$@"' "$tsf" $PIN "$@"; rc=$?
+fi
 # L405: correctness jobs stop waiting after their cap (25 min) and run beside us; say so, so the numbers are labelled.
-tsf="$W/.$$.held"
-flock -x "$Q" sh -c 'date -u +%FT%TZ > "$0"; exec "$@"' "$tsf" $PIN "$@"; rc=$?
 ts=$(cat "$tsf" 2>/dev/null); rm -f "$tsf"
 n=$( [ -n "$ts" ] && awk -v t="$ts" '$1 >= t' "$L/intrusions.log" 2>/dev/null | wc -l || echo 0)
 [ "${n:-0}" -gt 0 ] && echo "quiet-measure: $n correctness job(s) ran beside this measurement after waiting their cap; label its numbers 'shared machine' (L405)" >&2
