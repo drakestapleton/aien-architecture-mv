@@ -27,7 +27,7 @@ shift
 S=$HOME/yardsticks/sensors; R=$HOME/yardsticks/receipts; WR=${SPARK_WINDOWS_ROOT:-$HOME/yardsticks/windows}
 t_idle0=$(( $(date +%s) - idle ))
 head=$(git rev-parse --short HEAD 2>/dev/null)
-start=$(date +%Y-%m-%dT%H:%M:%S.%6N)
+start=$(date -u +%Y-%m-%dT%H:%M:%S.%6NZ)
 t0=$(date +%s.%N)
 "$@"; rc=$?
 t1=$(date +%s.%N)
