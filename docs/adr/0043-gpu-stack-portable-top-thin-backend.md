@@ -207,7 +207,7 @@ front end's destination is omc's own IR mode (OMEGESE §11, `.om`); the C front 
 Why the direct AMD encoder and not LLVM IR → `llc` in the build: an outside compiler in the build path
 is a dependency that must be recorded with its replacement (harness rule), and AMD publishes the ISA, so
 a direct encoder needs no reverse engineering. LLVM stays where `nvdisasm` sits for NVIDIA: an oracle
-that checks our words. If the direct encoder blocks P3 for longer than a stated budget, `llc` may be
+that checks my words. If the direct encoder blocks P3 for longer than a stated budget, `llc` may be
 used as a disclosed, pinned, migration-pending build dependency by a later decision, not by default.
 
 Apple honestly: AIR and the AGX ISA are undocumented, so the Apple backend emits MSL text and relies on
@@ -261,7 +261,7 @@ Until it lands, `vk-host.c` (draft #876) stays the disclosed interim C launcher 
 `migration-pending`. Metal has the same prerequisite. Direct DRM ioctls (amdgpu, v3d, msm) avoid the
 loader on Linux and are the `.om`-native route where a vendor documents its uAPI.
 
-**Licences, checked 2026-10-27 from upstream files** (we use public interfaces and documentation; no
+**Licences, checked 2026-10-27 from upstream files** (I use public interfaces and documentation; no
 code is copied):
 
 | Component | Licence | Source checked |
@@ -277,7 +277,7 @@ code is copied):
 | MoltenVK | Apache-2.0 | GitHub licence field |
 | AMD ISA reference guides | AMD document terms, not yet read | **open: the IP-lawyer review Drake requires covers this** |
 
-**Hardware we can reach (probed read-only 2026-10-27T01:44Z):**
+**Hardware I can reach (probed read-only 2026-10-27T01:44Z):**
 
 | Machine | GPU | Use | Status |
 |---|---|---|---|

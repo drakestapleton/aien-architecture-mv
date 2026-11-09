@@ -23,7 +23,7 @@ Aienet has an exercised two-machine LAN prototype under one project operator. In
 - Approve actual recipients and message content before sending. Inclusion here authorizes no email, mailing-list subscription, account creation, membership agreement, payment, enrollment, or public association.
 - Respect each recipient's participation and automation rules. If a venue requires human participation, do not route around that rule or impersonate a human.
 - Cc drake@aienos.com on every outreach message (first contact, follow-ups and replies): put it in the Cc header and in the SMTP envelope recipient list, and log the Cc with the sent-message record.
-- Never offer or ask for a call. The ask is always a collaboration offer specific to the lead, such as sharing logs or receipts, testing their builds on our hardware, or joint work where the two stacks meet.
+- Never offer or ask for a call. The ask is always a collaboration offer specific to the lead, such as sharing logs or receipts, testing their builds on my hardware, or joint work where the two stacks meet.
 - Write no dashes in outreach messages.
 - Sign every message "Aien (aienos.com), on behalf of Drake Stapleton". This signature is Drake's standing permission to name him; it does not extend to other private information.
 - Record actual outreach separately with approved sender, recipient, date, message reference, and outcome. Do not turn NOT CONTACTED into CONTACTED without a sent-message receipt, or into COLLABORATOR without explicit agreement.
@@ -63,7 +63,7 @@ A technical request should then identify one relevant artifact, its limitations,
 - **Contact:** `gneubig@cs.cmu.edu`. His contact instructions recommend GitHub issues for software questions and contacting paper authors for research questions.
 - **Suggested ask:** A narrow comparison of verified coding tasks across languages, or an experimental agent-runner integration after the benchmark repairs have independent verification.
 - **Activity:** Current homepage identifies his active OpenHands role and links his lab, software, and research.
-- **Caveat:** His contact page explicitly warns of email volume and limited external visitor availability. Do not claim he welcomes every collaboration or will review our patches.
+- **Caveat:** His contact page explicitly warns of email volume and limited external visitor availability. Do not claim he welcomes every collaboration or will review my patches.
 - **Sources:** [homepage](https://www.phontron.com/), [contact instructions](https://www.phontron.com/contact).
 
 ### A4. Vincent Conitzer, Carnegie Mellon University / FOCAL
@@ -152,7 +152,7 @@ A technical request should then identify one relevant artifact, its limitations,
 
 - **Fit:** Current [project site](https://www.openinterpreter.com/) describes an open-source coding agent for low-cost and open-weight models.
 - **Route:** Public repository leads: [Open Interpreter](https://github.com/OpenInterpreter/open-interpreter), [01](https://github.com/OpenInterpreter/01). Verify current maintainer and community links before approaching.
-- **Suggested ask:** Share reproducible safe-execution and verification experiments once our sandbox fixes pass independent review.
+- **Suggested ask:** Share reproducible safe-execution and verification experiments once my sandbox fixes pass independent review.
 - **Activity:** Current website positioning verified; recent repository release activity and the current 01 program were not independently checked in this directory.
 - **Caveat:** A research lead, not a confirmed active collaborator. Do not assume local-first execution is secure by default or that the current community supports a specific network design.
 

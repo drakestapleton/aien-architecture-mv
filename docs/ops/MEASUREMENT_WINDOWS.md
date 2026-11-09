@@ -142,10 +142,10 @@ and its log in `~/yardsticks/build-once.log`.
   the chip. `--quiet none` takes the GPU lock only, for checks that compare values, never speeds.
 - **The GPU lock.** `/tmp/aien-gb10.lock` is separate. The calibration holds it for its minute of
   probing and idling so the GPU stays idle. The baseline does not hold it, because the 27B server takes
-  that lock itself for every reply; holding it would make the server wait on us forever. Programs that
+  that lock itself for every reply; holding it would make the server wait on the baseline forever. Programs that
   use only the GPU lock keep it busy almost all the time (the first window ran out its hour waiting for
   it to go quiet), so the baseline asks for the reply word by word and stamps each word as it arrives.
-  From the first word to the last the server is holding the GPU lock for our reply, so the decode rate
+  From the first word to the last the server is holding the GPU lock for the baseline's reply, so the decode rate
   and its energy are clean however long the reply waited in the GPU queue. The baseline samples the
   lock table throughout and is marked not ok if anyone else held the GPU lock during the decode, or if
   the whole reply arrived in one burst (then nothing was timed).
@@ -168,7 +168,7 @@ and its log in `~/yardsticks/build-once.log`.
   decode), it does not stop them.
 - The memory probe is the one research/583 used (omega `research/cost-sim-583@3bd56731`,
   `tools/dagsim/memcpy_probe.c`), built with `cc -O2 -pthread`; 583 did not record its compiler
-  flags, so its numbers and ours are comparable in method, not guaranteed bit for bit.
+  flags, so its numbers and mine are comparable in method, not guaranteed bit for bit.
 
 ## Receipt format: what changed
 
