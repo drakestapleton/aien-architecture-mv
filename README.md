@@ -1,7 +1,3 @@
-<!-- languages -->
-**English** · [简体中文](README.zh-CN.md)
-<!-- /languages -->
-
 # AIEN Architecture
 
 The authority for how the AIEN project fits together: whole-system architecture, milestone status and what to do next. It holds documents and a few small checking tools, not product code.
