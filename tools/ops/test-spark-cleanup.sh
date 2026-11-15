@@ -25,7 +25,12 @@
 #   c8-badthr   SPARK_CLEANUP_LEFTOVER_ALARM_GB=0.5 is reported loudly, not a shell error
 #   c8-nolock   with a quiet-build in the scratch home, an --apply run gives the locked run classes
 #               without 8 and runs class 8 afterwards on its own (classes=8 line, after quiet-build ended)
-#   store-empty an empty store gives the loud "holds no bare repositories" ALARM and a board line
+#   store-empty an empty store gives the loud "holds no bare repositories" ALARM and one board line,
+#               not a second one on the next run
+#   c8-emerg    with free space under 10 % an --apply run still runs class 8 on its own, after the rest
+#   c8-main     the main clone ~/workspace/proj (no '-' in its name) is a shared reference copy: no ALARM
+#   c8-inner    an idle repository inside a copy that is in use now is not reported on its own
+#   c8-hook     the test in-use hook says in the log that it was used
 # Then mutants of spark-cleanup must each make at least one case fail.
 # Ends `TEST PASS cases=N mutants=M/M` (exit 0) or `TEST FAIL ...` (exit 1).
 set -u
@@ -74,6 +79,9 @@ setup() {  # $1 scratch home
   mkdir -p "$h/models"; truncate -s 1100M "$h/models/w.gguf"; ln "$h/models/w.gguf" "$h/work/lane/weights/linked.gguf"
   find "$h/workspace" "$h/work" "$h/elsewhere" -exec touch -h -d '5 days ago' {} + 2>/dev/null
   git clone -q "$h/git/proj.git" "$h/work/lane/fresh"
+  # c8-inner: a copy in use now (fresh files) holding an idle clone
+  git clone -q "$h/git/proj.git" "$h/work/lane/active"; git clone -q "$h/git/proj.git" "$h/work/lane/active/sub/inner"
+  find "$h/work/lane/active/sub" -exec touch -h -d '5 days ago' {} +
 }
 
 run() {  # $1 home, $2 spark-cleanup copy, rest: args; prints the log
@@ -109,6 +117,11 @@ suite() {  # $1 spark-cleanup copy; sets pass/fail
   # store-empty: a separate scratch home whose store is empty
   local e; e=$(mktemp -d "$top/e.XXXX"); mkdir -p "$e/git" "$e/workspace" "$e/handoffs"; : > "$e/handoffs/BOARD.md"
   HOME=$e SPARK_CLEANUP_QUIET=1 SPARK_CLEANUP_GITSTORE=$e/git SPARK_CLEANUP_BOARD=$e/handoffs/BOARD.md bash "$s" --apply --classes 2,8 > "$e/out.txt" 2>&1
+  HOME=$e SPARK_CLEANUP_QUIET=1 SPARK_CLEANUP_GITSTORE=$e/git SPARK_CLEANUP_BOARD=$e/handoffs/BOARD.md bash "$s" --apply --classes 2,8 > "$e/out2.txt" 2>&1
+  # c8-emerg: under 10 % free the deleting classes run without quiet-build; class 8 still runs alone after them
+  local qbn; qbn=$(wc -l < "$h/qb.log" 2>/dev/null || echo 0)
+  HOME=$h SPARK_CLEANUP_TEST_FREE_PCT=5 SPARK_CLEANUP_GITSTORE=$h/git SPARK_CLEANUP_BOARD=$h/handoffs/BOARD.md \
+    SPARK_CLEANUP_PROTECT=none-protected SPARK_CLEANUP_DRY_CLASSES= bash "$s" --apply --classes 2,8 > "$h/emerg.txt" 2>&1
   o="$h/apply1.txt"
   check c2-store "$( [ ! -d "$h/workspace/wt-store" ] && has "$o" 'class2 REMOVED .*wt-store'; echo $?)"
   check c2-remote "$( [ -d "$h/workspace/wt-remote" ] && has "$o" 'class2 SKIP not-in-git-store .*wt-remote'; echo $?)"
@@ -128,7 +141,11 @@ suite() {  # $1 spark-cleanup copy; sets pass/fail
   check c8-dedupe "$(has "$o2" 'board line not repeated' && [ "$(grep -c 'ALARM spark-cleanup class8' "$h/handoffs/BOARD.md")" = 1 ]; echo $?)"
   check c8-badthr "$(has "$h/badthr.txt" "class8 ALARM bad SPARK_CLEANUP_LEFTOVER_ALARM_GB='0.5'" && ! has "$h/badthr.txt" 'syntax error|arithmetic'; echo $?)"
   check c8-nolock "$(grep -q '^qb SKIP8=1 ' "$h/qb.log" 2>/dev/null && has "$h/nolock.txt" 'APPLY classes=2 ' && has "$h/nolock.txt" 'APPLY classes=8 ' && ! has "$h/nolock.txt" 'APPLY classes=2,8'; echo $?)"
-  check store-empty "$(has "$e/out.txt" 'holds no bare repositories' && grep -q 'holds no bare repositories' "$e/handoffs/BOARD.md"; echo $?)"
+  check store-empty "$(has "$e/out.txt" 'holds no bare repositories' && has "$e/out2.txt" 'holds no bare repositories' && [ "$(grep -c 'holds no bare repositories' "$e/handoffs/BOARD.md")" = 1 ]; echo $?)"
+  check c8-emerg "$(has "$h/emerg.txt" 'APPLY classes=2 ' && has "$h/emerg.txt" 'APPLY classes=8 ' && ! has "$h/emerg.txt" 'APPLY classes=2,8' && [ "$(wc -l < "$h/qb.log")" = "$qbn" ]; echo $?)"
+  check c8-main "$( ! has "$h/dry.txt" 'class8 ALARM [a-z]+-copy .*/workspace/proj '; echo $?)"
+  check c8-inner "$( ! has "$o" 'class8 ALARM .*/work/lane/active'; echo $?)"
+  check c8-hook "$(has "$o" 'test hook: in-use list read from'; echo $?)"
   check c8-nodel "$( [ -d "$h/work/lane/left" ] && [ -d "$h/work/lane/unst" ] && [ -d "$h/work/lane/dirty" ] && [ -f "$h/work/lane/weights/m.safetensors" ]; echo $?)"
 }
 
@@ -152,6 +169,9 @@ for spec in \
   'heads-only|s/awk .\$2 !~ \/\^refs\\\/remotes\\\/\/ \{print \$1\}./grep refs\/heads\/ | cut -d" " -f1/' \
   'no-dedupe|s/if \[ "\$sig" = "\$last" \]; then/if false; then/' \
   'class8-in-lock|s/SPARK_CLEANUP_SKIP8=1 "\$QB"/"\$QB"/' \
+  'no-emerg-split|s/else SPARK_CLEANUP_SKIP8=1 "\$0" "\$@"; _rc=\$\?; fi/else exec "\$0" "\$@"; fi/' \
+  'no-inner|s/    \[ \$inner = 1 \] && continue\n//' \
+  'main-clone|s/    case "\$r" in "\$H"\/workspace\/\*\/\*\) ;; [^\n]*\n//' \
   'index-write|s/export GIT_OPTIONAL_LOCKS=0\n//' \
   'no-board|s/      "\$\(date -u \+%FT%H:%MZ\)" "\$n" "\$\(human "\$bytes"\)" "\$LOG" >> "\$board"/      "x" "\$n" "x" "x" >\/dev\/null/' ; do
   name=${spec%%|*}; expr=${spec#*|}
