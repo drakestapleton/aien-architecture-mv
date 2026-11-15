@@ -16,7 +16,17 @@
 #               must not rewrite a copy and make it look recently used
 #   c8-board    the --apply run writes exactly one ALARM line to the scratch board; a dry run writes none
 #   c8-nodel    class 8 deletes nothing
-# Then five mutants of spark-cleanup must each make at least one case fail.
+#   c8-stash    an idle clone whose only unsaved work is a stash: unstored-copy, not leftover
+#   c8-ignored  an idle clone with results in a git-ignored folder: dirty-copy, not leftover
+#   c8-unread   an idle linked worktree whose admin folder is gone (git cannot read it): unreadable-copy
+#   c8-nested   an idle clone whose head is only in a nested store repo (git/sub/n.git): leftover-copy
+#   c8-hardlink a weight file hard-linked from ~/models (2 links) is not called a copy
+#   c8-dedupe   a second --apply run over the same copies adds no second board line
+#   c8-badthr   SPARK_CLEANUP_LEFTOVER_ALARM_GB=0.5 is reported loudly, not a shell error
+#   c8-nolock   with a quiet-build in the scratch home, an --apply run gives the locked run classes
+#               without 8 and runs class 8 afterwards on its own (classes=8 line, after quiet-build ended)
+#   store-empty an empty store gives the loud "holds no bare repositories" ALARM and a board line
+# Then mutants of spark-cleanup must each make at least one case fail.
 # Ends `TEST PASS cases=N mutants=M/M` (exit 0) or `TEST FAIL ...` (exit 1).
 set -u
 here=$(cd "$(dirname "$0")" && pwd)
@@ -26,6 +36,8 @@ top=$(mktemp -d) || exit 2
 [ -n "${KEEP:-}" ] || trap 'rm -rf "$top"' EXIT
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t GIT_TERMINAL_PROMPT=0
 unset GIT_DIR GIT_WORK_TREE
+# nothing in the scratch home is open by another process; skip the machine-wide scan
+: > "$top/inuse"; export SPARK_CLEANUP_TEST_INUSE_FILE="$top/inuse"
 
 setup() {  # $1 scratch home
   local h=$1
@@ -47,7 +59,19 @@ setup() {  # $1 scratch home
   git clone -q "$h/git/proj.git" "$h/work/lane/unst"
   echo c > "$h/work/lane/unst/c"; git -C "$h/work/lane/unst" add c; git -C "$h/work/lane/unst" commit -qm c
   git clone -q "$h/git/proj.git" "$h/work/lane/dirty"; echo x >> "$h/work/lane/dirty/a"
+  git clone -q "$h/git/proj.git" "$h/work/lane/stash"; echo s >> "$h/work/lane/stash/a"; git -C "$h/work/lane/stash" stash -q
+  git clone -q "$h/git/proj.git" "$h/work/lane/ign"; mkdir -p "$h/work/lane/ign/secret"; echo r > "$h/work/lane/ign/secret/results"
+  echo secret/ >> "$h/work/lane/ign/.git/info/exclude"
+  git -C "$h/workspace/proj" worktree add -q -b wt-orphan "$h/work/lane/orphan" main
+  echo z > "$h/work/lane/orphan/z"; git -C "$h/work/lane/orphan" add z; git -C "$h/work/lane/orphan" commit -qm z
+  rm -rf "$h/workspace/proj/.git/worktrees/orphan"
+  mkdir -p "$h/git/sub" "$h/work/lane/nested-src"; git init -q -b main "$h/work/lane/nested-src"
+  echo n > "$h/work/lane/nested-src/n"; git -C "$h/work/lane/nested-src" add n; git -C "$h/work/lane/nested-src" commit -qm n
+  git clone -q --bare "$h/work/lane/nested-src" "$h/git/sub/n.git"; rm -rf "$h/work/lane/nested-src"
+  git clone -q "$h/git/sub/n.git" "$h/work/lane/nested"
+
   mkdir -p "$h/work/lane/weights"; truncate -s 1100M "$h/work/lane/weights/m.safetensors"
+  mkdir -p "$h/models"; truncate -s 1100M "$h/models/w.gguf"; ln "$h/models/w.gguf" "$h/work/lane/weights/linked.gguf"
   find "$h/workspace" "$h/work" "$h/elsewhere" -exec touch -h -d '5 days ago' {} + 2>/dev/null
   git clone -q "$h/git/proj.git" "$h/work/lane/fresh"
 }
@@ -71,7 +95,21 @@ suite() {  # $1 spark-cleanup copy; sets pass/fail
   local dry="$h/out.txt"; cp "$dry" "$h/dry.txt"
   [ ! -s "$h/handoffs/BOARD.md" ]; local dryboard=$?
   run "$h" "$s" --apply --classes 2,8
-  local o="$h/out.txt"
+  local o="$h/out.txt"; cp "$o" "$h/apply1.txt"
+  run "$h" "$s" --apply --classes 8
+  local o2="$h/apply2.txt"; cp "$h/out.txt" "$o2"
+  SPARK_CLEANUP_LEFTOVER_ALARM_GB=0.5 run "$h" "$s" --classes 8
+  local o3="$h/out.txt"; cp "$o3" "$h/badthr.txt"
+  # c8-nolock: fake quiet-build records the env it ran with, then runs the command
+  mkdir -p "$h/.local/bin"
+  printf '#!/bin/bash\necho "qb SKIP8=${SPARK_CLEANUP_SKIP8:-} $(date +%%s%%N)" >> "%s/qb.log"\n"$@"\nrc=$?\necho "qb-end $(date +%%s%%N)" >> "%s/qb.log"\nexit $rc\n' "$h" "$h" > "$h/.local/bin/quiet-build"
+  chmod +x "$h/.local/bin/quiet-build"
+  HOME=$h SPARK_CLEANUP_TEST_FREE_PCT=50 SPARK_CLEANUP_GITSTORE=$h/git SPARK_CLEANUP_BOARD=$h/handoffs/BOARD.md \
+    SPARK_CLEANUP_PROTECT=none-protected SPARK_CLEANUP_DRY_CLASSES= bash "$s" --apply --classes 2,8 > "$h/nolock.txt" 2>&1
+  # store-empty: a separate scratch home whose store is empty
+  local e; e=$(mktemp -d "$top/e.XXXX"); mkdir -p "$e/git" "$e/workspace" "$e/handoffs"; : > "$e/handoffs/BOARD.md"
+  HOME=$e SPARK_CLEANUP_QUIET=1 SPARK_CLEANUP_GITSTORE=$e/git SPARK_CLEANUP_BOARD=$e/handoffs/BOARD.md bash "$s" --apply --classes 2,8 > "$e/out.txt" 2>&1
+  o="$h/apply1.txt"
   check c2-store "$( [ ! -d "$h/workspace/wt-store" ] && has "$o" 'class2 REMOVED .*wt-store'; echo $?)"
   check c2-remote "$( [ -d "$h/workspace/wt-remote" ] && has "$o" 'class2 SKIP not-in-git-store .*wt-remote'; echo $?)"
   check c8-left "$(has "$o" 'class8 ALARM leftover-copy .*/work/lane/left '; echo $?)"
@@ -82,6 +120,15 @@ suite() {  # $1 spark-cleanup copy; sets pass/fail
   check c8-wt-own "$(has "$h/dry.txt" 'class8 ALARM leftover-copy .*/workspace/wt-store '; echo $?)"
   check c8-rerun "$(has "$h/dry.txt" 'class8 ALARM leftover-copy .*/work/lane/left ' && has "$o" 'class8 ALARM leftover-copy .*/work/lane/left '; echo $?)"
   check c8-board "$( [ "$dryboard" = 0 ] && [ "$(grep -c 'ALARM spark-cleanup class8' "$h/handoffs/BOARD.md")" = 1 ]; echo $?)"
+  check c8-stash "$(has "$o" 'class8 ALARM unstored-copy .*/work/lane/stash '; echo $?)"
+  check c8-ignored "$(has "$o" 'class8 ALARM dirty-copy .*/work/lane/ign .*ignored files'; echo $?)"
+  check c8-unread "$(has "$o" 'class8 ALARM unreadable-copy .*/work/lane/orphan '; echo $?)"
+  check c8-nested "$(has "$o" 'class8 ALARM leftover-copy .*/work/lane/nested '; echo $?)"
+  check c8-hardlink "$( ! has "$o" 'model-copy .*linked\.gguf'; echo $?)"
+  check c8-dedupe "$(has "$o2" 'board line not repeated' && [ "$(grep -c 'ALARM spark-cleanup class8' "$h/handoffs/BOARD.md")" = 1 ]; echo $?)"
+  check c8-badthr "$(has "$h/badthr.txt" "class8 ALARM bad SPARK_CLEANUP_LEFTOVER_ALARM_GB='0.5'" && ! has "$h/badthr.txt" 'syntax error|arithmetic'; echo $?)"
+  check c8-nolock "$(grep -q '^qb SKIP8=1 ' "$h/qb.log" 2>/dev/null && has "$h/nolock.txt" 'APPLY classes=2 ' && has "$h/nolock.txt" 'APPLY classes=8 ' && ! has "$h/nolock.txt" 'APPLY classes=2,8'; echo $?)"
+  check store-empty "$(has "$e/out.txt" 'holds no bare repositories' && grep -q 'holds no bare repositories' "$e/handoffs/BOARD.md"; echo $?)"
   check c8-nodel "$( [ -d "$h/work/lane/left" ] && [ -d "$h/work/lane/unst" ] && [ -d "$h/work/lane/dirty" ] && [ -f "$h/work/lane/weights/m.safetensors" ]; echo $?)"
 }
 
@@ -98,9 +145,13 @@ mutate() {  # $1 name, $2 perl substitution
 }
 mt=0 mc=0
 for spec in \
-  'store-always-true|s/in_git_store\(\) \{  # \$1 commit sha; true \(and prints the bare repo\) if a ref there reaches it\n/in_git_store() { return 0;\n/' \
+  'store-always-true|s/(in_git_store\(\) \{  # \$1 commit sha[^\n]*\n)/$1  return 0\n/' \
   'old-pushed-check|s/if \[ -z "\$head" \] \|\| ! in_git_store "\$head" >\/dev\/null; then/if [ -z "\$(git -C "\$wt" branch -r --contains HEAD 2>\/dev\/null | head -1)" ] \&\& ! in_git_store "\$head" >\/dev\/null; then/' \
   'no-idle-check|s/    recent "\$r" "\$idle_min" && continue\n//' \
+  'unreadable-is-leftover|s/kind=unreadable; why=/kind=leftover; why=/' \
+  'heads-only|s/awk .\$2 !~ \/\^refs\\\/remotes\\\/\/ \{print \$1\}./grep refs\/heads\/ | cut -d" " -f1/' \
+  'no-dedupe|s/if \[ "\$sig" = "\$last" \]; then/if false; then/' \
+  'class8-in-lock|s/SPARK_CLEANUP_SKIP8=1 "\$QB"/"\$QB"/' \
   'index-write|s/export GIT_OPTIONAL_LOCKS=0\n//' \
   'no-board|s/      "\$\(date -u \+%FT%H:%MZ\)" "\$n" "\$\(human "\$bytes"\)" "\$LOG" >> "\$board"/      "x" "\$n" "x" "x" >\/dev\/null/' ; do
   name=${spec%%|*}; expr=${spec#*|}
