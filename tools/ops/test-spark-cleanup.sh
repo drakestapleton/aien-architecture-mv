@@ -33,6 +33,17 @@
 #               ALARM marked "main clone"
 #   c8-drymark  a dry --classes 8 run neither reads nor writes the --apply scan's start and finish marks
 #   c2-nested   an idle clean worktree holding a repository in an ignored folder (.lake/packages/dep) is kept
+#   c2-untracked a worktree whose status.showUntrackedFiles=no hides notes.txt: kept, file unchanged
+#   c2-ignored  the same setting hides an ignored secret/: kept, file unchanged
+#   c2-skipwt   a skip-worktree edit that status does not show: kept, the edit unchanged
+#   c2-assume   an assume-unchanged edit that status does not show: kept, the edit unchanged
+#   c2-bare     a bare repo .lake/packages/dep.git whose commit is not in ~/git: kept, not leftover
+#   c8-nestbad  a nested repo in an ignored build/, one in .lake, and a submodule commit, none of them
+#               in ~/git: unstored, not leftover, and the files still there
+#   c8-remoteref a commit reachable only from refs/remotes/other/main, not in ~/git: unstored, not leftover
+#   c8-fourbit  ~/work/hive/uxl-brief-20261113/FourBit is not deleted and not named for removal.
+#               A verified cargo target under ~/handoffs/hive/factory-bays is removed; one under
+#               evidence, and a plain file under ~/handoffs, stays.
 #   c8-inner    an idle repository inside a copy that is in use now is not reported on its own
 #   c8-hook     the test in-use hook says in the log that it was used
 #   c8-agentwt  an idle linked worktree inside the main clone (proj/.claude/worktrees/agent-x) is reported
@@ -81,6 +92,9 @@ setup() {  # $1 scratch home
   echo .lake/ >> "$h/workspace/proj/.git/info/exclude"
   git -C "$h/workspace/proj" worktree add -q -b wt-nest "$h/workspace/wt-nest" main
   git init -q -b main "$h/workspace/wt-nest/.lake/packages/dep"
+  echo d > "$h/workspace/wt-nest/.lake/packages/dep/d"
+  git -C "$h/workspace/wt-nest/.lake/packages/dep" add d
+  git -C "$h/workspace/wt-nest/.lake/packages/dep" commit -qm d
   git -C "$h/workspace/proj" worktree add -q -b agent-x "$h/workspace/proj/.claude/worktrees/agent-x" main
   git -C "$h/workspace/proj" worktree add -q -b kflow "$h/workspace/kflow" main
   git -C "$h/workspace/proj" worktree add -q -b wt-orphan "$h/work/lane/orphan" main
@@ -93,7 +107,67 @@ setup() {  # $1 scratch home
 
   mkdir -p "$h/work/lane/weights"; truncate -s 1100M "$h/work/lane/weights/m.safetensors"
   mkdir -p "$h/models"; truncate -s 1100M "$h/models/w.gguf"; ln "$h/models/w.gguf" "$h/work/lane/weights/linked.gguf"
-  find "$h/workspace" "$h/work" "$h/elsewhere" -exec touch -h -d '5 days ago' {} + 2>/dev/null
+  # hidden from a plain git status: untracked, ignored, and a skip-worktree edit. HEAD is in the store.
+  git init -q -b main "$h/workspace/hide-repo"
+  echo a > "$h/workspace/hide-repo/a"; git -C "$h/workspace/hide-repo" add a; git -C "$h/workspace/hide-repo" commit -qm a
+  git clone -q --bare "$h/workspace/hide-repo" "$h/git/hide.git"
+  git -C "$h/workspace/hide-repo" worktree add -q -b wt-untracked "$h/workspace/wt-untracked" main
+  git -C "$h/workspace/hide-repo" worktree add -q -b wt-ignored "$h/workspace/wt-ignored" main
+  git -C "$h/workspace/hide-repo" config status.showUntrackedFiles no
+  echo notes > "$h/workspace/wt-untracked/notes.txt"
+  mkdir -p "$h/workspace/wt-ignored/secret"; echo z > "$h/workspace/wt-ignored/secret/z"
+  echo secret/ >> "$h/workspace/hide-repo/.git/info/exclude"
+  git init -q -b main "$h/workspace/skip-repo"
+  echo a > "$h/workspace/skip-repo/a"; git -C "$h/workspace/skip-repo" add a; git -C "$h/workspace/skip-repo" commit -qm a
+  git clone -q --bare "$h/workspace/skip-repo" "$h/git/skip.git"
+  git -C "$h/workspace/skip-repo" worktree add -q -b wt-skip "$h/workspace/wt-skip" main
+  git -C "$h/workspace/wt-skip" update-index --skip-worktree a
+  echo edited >> "$h/workspace/wt-skip/a"
+  git -C "$h/workspace/skip-repo" worktree add -q -b wt-assume "$h/workspace/wt-assume" main
+  git -C "$h/workspace/wt-assume" update-index --assume-unchanged a
+  echo edited >> "$h/workspace/wt-assume/a"
+  # bare repository inside an ignored .lake/, commit not in the store
+  git -C "$h/workspace/proj" worktree add -q -b wt-bare "$h/workspace/wt-bare" main
+  git init -q -b main "$h/elsewhere/bare-src"
+  echo only > "$h/elsewhere/bare-src/only"
+  git -C "$h/elsewhere/bare-src" add only; git -C "$h/elsewhere/bare-src" commit -qm only
+  mkdir -p "$h/workspace/wt-bare/.lake/packages"
+  git clone -q --bare "$h/elsewhere/bare-src" "$h/workspace/wt-bare/.lake/packages/dep.git"
+  rm -rf "$h/elsewhere/bare-src"
+  # nested repository inside an ignored build/, commit not in the store; the parent commit is
+  git clone -q "$h/git/proj.git" "$h/work/lane/outer"
+  printf 'build/\n' >> "$h/work/lane/outer/.gitignore"
+  git -C "$h/work/lane/outer" add .gitignore; git -C "$h/work/lane/outer" commit -qm gi
+  git -C "$h/work/lane/outer" push -q origin HEAD:main
+  git init -q -b main "$h/work/lane/outer/build/mywork"
+  echo w > "$h/work/lane/outer/build/mywork/w"
+  git -C "$h/work/lane/outer/build/mywork" add w; git -C "$h/work/lane/outer/build/mywork" commit -qm w
+  # submodule whose commit object lives only inside the clone
+  git init -q -b main "$h/elsewhere/dep-src"
+  echo d > "$h/elsewhere/dep-src/d"; git -C "$h/elsewhere/dep-src" add d; git -C "$h/elsewhere/dep-src" commit -qm d
+  git clone -q "$h/git/proj.git" "$h/work/lane/super"
+  git -C "$h/work/lane/super" -c protocol.file.allow=always submodule add -q "$h/elsewhere/dep-src" dep
+  git -C "$h/work/lane/super" commit -qm sub
+  git -C "$h/work/lane/super" push -q origin HEAD:main
+  rm -rf "$h/elsewhere/dep-src"
+  # commit reachable only from a remote-tracking ref
+  git clone -q "$h/git/proj.git" "$h/work/lane/rem"
+  git -C "$h/work/lane/rem" commit -q --allow-empty -m extra
+  git -C "$h/work/lane/rem" update-ref refs/remotes/other/main HEAD
+  git -C "$h/work/lane/rem" reset -q --hard origin/main
+  # FourBit is excluded whole. A verified cargo target under factory-bays may go;
+  # one under evidence, and any other file under handoffs, stays.
+  local fb="$h/work/hive/uxl-brief-20261113/FourBit" bay="$h/handoffs/hive/factory-bays/job"
+  mkdir -p "$fb/target/debug" "$bay/target/debug" "$bay/evidence/target/debug"
+  printf 'Signature: 8a477f597d28d172789f06886806bc55\n' > "$fb/target/CACHEDIR.TAG"
+  echo only > "$fb/target/ONLY-COPY.txt"; echo keep > "$fb/keep.txt"
+  git clone -q "$h/git/proj.git" "$fb/checkout"
+  printf 'Signature: 8a477f597d28d172789f06886806bc55\n' > "$bay/target/CACHEDIR.TAG"
+  echo rebuild > "$bay/target/rebuild.txt"
+  printf 'Signature: 8a477f597d28d172789f06886806bc55\n' > "$bay/evidence/target/CACHEDIR.TAG"
+  echo keep > "$bay/evidence/target/keep.txt"
+  echo keep > "$h/handoffs/keep.txt"
+  find "$h/workspace" "$h/work" "$h/elsewhere" "$h/handoffs" -exec touch -h -d '5 days ago' {} + 2>/dev/null
   git clone -q "$h/git/proj.git" "$h/work/lane/fresh"
   # c8-inner: a copy in use now (fresh files) holding an idle clone
   git clone -q "$h/git/proj.git" "$h/work/lane/active"; git clone -q "$h/git/proj.git" "$h/work/lane/active/sub/inner"
@@ -102,7 +176,7 @@ setup() {  # $1 scratch home
 
 run() {  # $1 home, $2 spark-cleanup copy, rest: args; prints the log
   local h=$1 s=$2; shift 2
-  HOME=$h SPARK_CLEANUP_QUIET=1 SPARK_CLEANUP_GITSTORE=$h/git SPARK_CLEANUP_BOARD=$h/handoffs/BOARD.md \
+  HOME=$h SPARK_CLEANUP_QUIET=1 SPARK_CLEANUP_OFFLINE=1 SPARK_CLEANUP_GITSTORE=$h/git SPARK_CLEANUP_BOARD=$h/handoffs/BOARD.md \
     SPARK_CLEANUP_PROTECT=none-protected SPARK_CLEANUP_DRY_CLASSES= bash "$s" "$@" > "$h/out.txt" 2>&1
 }
 
@@ -153,6 +227,7 @@ suite() {  # $1 spark-cleanup copy; sets pass/fail
   local qbn; qbn=$(wc -l < "$h/qb.log" 2>/dev/null || echo 0)
   HOME=$h SPARK_CLEANUP_TEST_FREE_PCT=5 SPARK_CLEANUP_GITSTORE=$h/git SPARK_CLEANUP_BOARD=$h/handoffs/BOARD.md \
     SPARK_CLEANUP_PROTECT=none-protected SPARK_CLEANUP_DRY_CLASSES= bash "$s" --apply --classes 2,8 > "$h/emerg.txt" 2>&1
+  run "$h" "$s" --apply --classes 1; cp "$h/out.txt" "$h/class1.txt"
   o="$h/apply1.txt"
   check c2-store "$( [ ! -d "$h/workspace/wt-store" ] && has "$o" 'class2 REMOVED .*wt-store'; echo $?)"
   check c2-remote "$( [ -d "$h/workspace/wt-remote" ] && has "$o" 'class2 SKIP not-in-git-store .*wt-remote'; echo $?)"
@@ -177,6 +252,14 @@ suite() {  # $1 spark-cleanup copy; sets pass/fail
   check c8-main "$(has "$h/dry.txt" 'class8 SKIP main-clone .*/workspace/ref ' && has "$h/dry.txt" 'class8 ALARM unstored-copy .*/workspace/proj .*main clone:' && ! has "$h/dry.txt" 'class8 ALARM [a-z]+-copy .*/workspace/ref '; echo $?)"
   check c8-drymark "$dm_ok"
   check c2-nested "$( [ -d "$h/workspace/wt-nest" ] && has "$o" 'class2 SKIP nested-repo .*wt-nest'; echo $?)"
+  check c2-untracked "$( [ -f "$h/workspace/wt-untracked/notes.txt" ] && [ "$(cat "$h/workspace/wt-untracked/notes.txt")" = notes ] && has "$o" 'class2 SKIP unsaved .*wt-untracked' && ! has "$o" 'class2 REMOVED .*wt-untracked' && ! has "$o" 'class8 ALARM leftover-copy .*/workspace/wt-untracked '; echo $?)"
+  check c2-ignored "$( [ -f "$h/workspace/wt-ignored/secret/z" ] && [ "$(cat "$h/workspace/wt-ignored/secret/z")" = z ] && has "$o" 'class2 SKIP unsaved .*wt-ignored' && ! has "$o" 'class2 REMOVED .*wt-ignored' && ! has "$o" 'class8 ALARM leftover-copy .*/workspace/wt-ignored '; echo $?)"
+  check c2-skipwt "$( [ -f "$h/workspace/wt-skip/a" ] && grep -q edited "$h/workspace/wt-skip/a" && has "$o" 'class2 SKIP unsaved .*wt-skip' && ! has "$o" 'class2 REMOVED .*wt-skip' && ! has "$o" 'class8 ALARM leftover-copy .*/workspace/wt-skip '; echo $?)"
+  check c2-assume "$( [ -f "$h/workspace/wt-assume/a" ] && grep -q edited "$h/workspace/wt-assume/a" && has "$o" 'class2 SKIP unsaved .*wt-assume' && ! has "$o" 'class2 REMOVED .*wt-assume' && ! has "$o" 'class8 ALARM leftover-copy .*/workspace/wt-assume '; echo $?)"
+  check c2-bare "$( [ -d "$h/workspace/wt-bare/.lake/packages/dep.git" ] && git -C "$h/workspace/wt-bare/.lake/packages/dep.git" cat-file -e HEAD && has "$o" 'class2 SKIP nested-repo .*wt-bare' && ! has "$o" 'class2 REMOVED .*wt-bare' && has "$o" 'class8 ALARM unstored-copy .*/workspace/wt-bare ' && ! has "$o" 'class8 ALARM leftover-copy .*/workspace/wt-bare '; echo $?)"
+  check c8-nestbad "$( has "$o" 'class8 ALARM unstored-copy .*/work/lane/outer ' && ! has "$o" 'class8 ALARM leftover-copy .*/work/lane/outer ' && [ -f "$h/work/lane/outer/build/mywork/w" ] && has "$o" 'class8 ALARM unstored-copy .*/workspace/wt-nest ' && ! has "$o" 'class8 ALARM leftover-copy .*/workspace/wt-nest ' && [ -d "$h/workspace/wt-nest/.lake/packages/dep" ] && has "$o" 'class8 ALARM unstored-copy .*/work/lane/super ' && ! has "$o" 'class8 ALARM leftover-copy .*/work/lane/super ' && [ -f "$h/work/lane/super/dep/d" ]; echo $?)"
+  check c8-remoteref "$( has "$o" 'class8 ALARM unstored-copy .*/work/lane/rem ' && ! has "$o" 'class8 ALARM leftover-copy .*/work/lane/rem ' && [ -d "$h/work/lane/rem" ]; echo $?)"
+  check c8-fourbit "$( [ -f "$h/work/hive/uxl-brief-20261113/FourBit/target/ONLY-COPY.txt" ] && [ -f "$h/work/hive/uxl-brief-20261113/FourBit/keep.txt" ] && [ -d "$h/work/hive/uxl-brief-20261113/FourBit/checkout" ] && ! has "$h/class1.txt" 'REMOVED .*FourBit' && ! has "$o" 'leftover-copy .*FourBit' && [ ! -e "$h/handoffs/hive/factory-bays/job/target/rebuild.txt" ] && has "$h/class1.txt" 'class1 REMOVED .*factory-bays/job/target' && [ -f "$h/handoffs/hive/factory-bays/job/evidence/target/keep.txt" ] && has "$h/class1.txt" 'class1 SKIP protected .*evidence/target' && [ -f "$h/handoffs/keep.txt" ]; echo $?)"
   check c8-inner "$( ! has "$o" 'class8 ALARM .*/work/lane/active'; echo $?)"
   check c8-agentwt "$(has "$h/dry.txt" 'class8 ALARM [a-z]+-copy .*/workspace/proj/\.claude/worktrees/agent-x '; echo $?)"
   check c8-dashwt "$(has "$h/dry.txt" 'class8 ALARM [a-z]+-copy .*/workspace/kflow '; echo $?)"
@@ -205,7 +288,7 @@ for spec in \
   'old-pushed-check|s/if \[ -z "\$head" \] \|\| ! in_git_store "\$head" >\/dev\/null; then/if [ -z "\$(git -C "\$wt" branch -r --contains HEAD 2>\/dev\/null | head -1)" ] \&\& ! in_git_store "\$head" >\/dev\/null; then/' \
   'no-idle-check|s/    recent "\$r" "\$idle_min" && continue\n//' \
   'unreadable-is-leftover|s/kind=unreadable; why=/kind=leftover; why=/' \
-  'heads-only|s/awk .\$2 !~ \/\^refs\\\/remotes\\\/\/ \{print \$1\}./grep refs\/heads\/ | cut -d" " -f1/' \
+  'heads-only|s#for-each-ref --format=.%\(objectname\) %\(refname\).#for-each-ref --format="%(objectname)" refs/heads#' \
   'no-dedupe|s/if \[ "\$sig" = "\$last" \]; then/if false; then/' \
   'class8-in-lock|s/SPARK_CLEANUP_SKIP8=1 "\$QB"/"\$QB"/' \
   'no-emerg-split|s/else SPARK_CLEANUP_SKIP8=1 "\$0" "\$@"; _rc=\$\?; fi/else exec "\$0" "\$@"; fi/' \

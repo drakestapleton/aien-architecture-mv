@@ -13,9 +13,14 @@
 #      SHA per lane stays, the per-SHA lock (else the lane lock) must be free,
 #      dirs over 5 GiB are logged REVIEW and never removed. Reported as its own
 #      class so dry-classes can hold it dry ("1s") while class 1 stays live.
-#   2  git worktrees under ~/workspace: clean, HEAD present in ~/git (reachable
-#      from a ref of a bare repository there; a push to some other remote does
-#      not count), untouched 24 h, only ignored build junk inside
+#   2  git worktrees under ~/workspace: untouched 24 h, HEAD present in ~/git
+#      (reachable from a ref of a bare repository there; a push to some other
+#      remote does not count), and no unsaved bytes. A plain `git status` is
+#      not that check: untracked and ignored files hidden by
+#      status.showUntrackedFiles, and skip-worktree or assume-unchanged edits,
+#      keep the worktree. A nested repository keeps it too, including a bare
+#      repository whose folder is named *.git (for example .lake/dep.git) and
+#      not only a path named .git.
 #      -> git worktree remove + prune.
 #   3  docker dangling images and build cache.
 #   4  caches: ~/.cargo/registry/cache files unread 30 d, rustup toolchains
@@ -28,11 +33,14 @@
 #   8  leftover-copy ALARM: REPORT ONLY. Never deletes. Git clones and
 #      worktrees under ~/workspace, ~/work and ~/.claude/jobs with nothing
 #      written for 3 days and nothing open, each given one kind:
-#        leftover   clean, every local ref (branches, stash, tags; HEAD only
-#                   for a linked worktree) in a bare repo of ~/git, nothing
-#                   ignored but build output: a finished task left its copy
-#        unstored   a local ref not in ~/git (work at risk)
-#        dirty      uncommitted changes, or ignored files that are not build output
+#        leftover   clean, every ref (branches, stash, tags, remote-tracking;
+#                   HEAD only for a linked worktree) in a bare repo of ~/git,
+#                   nested repositories and submodule commits in ~/git too,
+#                   nothing ignored but build output: a finished task left its copy
+#        unstored   a ref, nested repository or submodule commit not in ~/git
+#        dirty      uncommitted, untracked, skip-worktree or assume-unchanged
+#                   changes, or ignored files that are not build output.
+#                   status.showUntrackedFiles is forced on for this check
 #        unreadable git cannot read it (broken worktree, other owner): never "leftover"
 #      plus model weight files over 1 GiB with one link (.safetensors .gguf
 #      .pt .pth): copies, not links. ~/git is searched with nested folders;
@@ -51,6 +59,13 @@
 #     24 h for worktrees, 2 days for /tmp, 7 days for ~/.cache)
 #   - skipped if the path looks like evidence, receipts, handoffs,
 #     yardsticks, ~/.local/state, or another user's home
+#   - the whole of ~/work/hive/uxl-brief-20261113/FourBit is skipped,
+#     including a cargo target inside it. That tree is not a cache this
+#     program is allowed to judge or to name for removal
+#   - a verified cargo target under ~/handoffs/hive/factory-bays may be
+#     removed: it is rebuildable build output. evidence, receipts, keys,
+#     bundles and jsonl under that tree stay. Nothing else under ~/handoffs
+#     is removed
 #   - skipped if its name is in the protected list (active agent names)
 #
 # Usage:
@@ -213,6 +228,7 @@ recent() {  # $1 dir, $2 minutes: true if anything inside changed recently
 size_of() { $SUDO du -sxb -- "$1" 2>/dev/null | cut -f1; }
 protected_path() {
   case "$1" in
+    "$H"/work/hive/uxl-brief-20261113/FourBit|"$H"/work/hive/uxl-brief-20261113/FourBit/*) return 0 ;;
     "$H"/handoffs/hive/factory-bays/*)
       # Allow verified Cargo build caches under factory-bays; protect everything else in handoffs
       is_cargo_target "$1" || return 0
@@ -260,14 +276,80 @@ in_git_store() {  # $1 commit sha; true if a ref of a bare repo in the store rea
   done
   STORE_HIT[$1]=0; return 1
 }
-repo_heads() {  # $1 repo dir: HEAD, plus every local ref (branches, stash, tags; not remote-tracking) of a main clone;
-  # a linked worktree (.git is a file) shares its refs with the main clone, so only its own HEAD
+repo_heads() {  # $1 repo dir: HEAD, plus every ref (branches, stash, tags AND remote-tracking)
+  # of a main clone. A commit that exists only as a remote-tracking ref is not saved.
+  # A linked worktree (.git is a file) shares its refs with the main clone, so only its own HEAD
   # is its work. Exit 1 when git cannot read the repository.
   git -C "$1" rev-parse --verify -q 'HEAD^{commit}' 2>/dev/null || git -C "$1" rev-parse --git-dir >/dev/null 2>&1 || return 1
   [ -f "$1/.git" ] && return 0
-  local refs; refs=$(git -C "$1" for-each-ref --format='%(objectname) %(refname)' 2>/dev/null) || return 1
-  awk '$2 !~ /^refs\/remotes\// {print $1}' <<<"$refs"
-  return 0
+  git -C "$1" for-each-ref --format='%(objectname) %(refname)' 2>/dev/null | awk '{print $1}'
+}
+# 0 and a one-line reason when the copy holds bytes a plain `git status --porcelain` can hide
+# or any other unsaved change. Forces untracked and ignored files on. Compares skip-worktree
+# (S) and assume-unchanged (h) files with the index, which status does not show.
+copy_unsaved() {
+  local s rc line path flag idx wt
+  s=$(git -C "$1" -c status.showUntrackedFiles=all status --porcelain=v1 --untracked-files=all --ignored=matching 2>/dev/null)
+  rc=$?
+  if [ "$rc" -ne 0 ]; then echo "git status failed"; return 0; fi
+  line=$(printf '%s\n' "$s" | grep -vE '^!! |^$' | head -1 || true)
+  if [ -n "$line" ]; then echo "uncommitted or untracked changes"; return 0; fi
+  line=$(printf '%s\n' "$s" | grep '^!! ' | grep -vE "$BUILD_JUNK_RE" | head -1 || true)
+  if [ -n "$line" ]; then echo "ignored files that are not build output (${line#!! })"; return 0; fi
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    flag=${line:0:1}
+    case "$flag" in S|s|h) ;; *) continue ;; esac
+    path=${line:2}
+    if [ ! -e "$1/$path" ]; then echo "skip-worktree path missing ($path)"; return 0; fi
+    idx=$(git -C "$1" rev-parse -q --verify ":$path" 2>/dev/null) || { echo "skip-worktree path not in the index ($path)"; return 0; }
+    wt=$(git -C "$1" hash-object -- "$1/$path" 2>/dev/null) || { echo "skip-worktree path cannot be read ($path)"; return 0; }
+    if [ "$idx" != "$wt" ]; then echo "skip-worktree or assume-unchanged file differs from the saved copy ($path)"; return 0; fi
+  done < <(git -C "$1" ls-files -v -- 2>/dev/null || true)
+  return 1
+}
+# Prints each repository inside $1, not $1 itself. A checkout is the parent of a
+# path named .git. A bare repository is the directory itself when its name ends
+# in .git (for example .lake/packages/dep.git) and git says it is bare.
+each_nested_repo() {
+  local g dir
+  while IFS= read -r g; do
+    [ -n "$g" ] || continue
+    case "$g" in
+      */.git)
+        dir=${g%/.git}
+        [ "$dir" = "$1" ] && continue
+        printf '%s\n' "$dir"
+        ;;
+      *)
+        [ -d "$g" ] || continue
+        [ "$(git -C "$g" rev-parse --is-bare-repository 2>/dev/null)" = true ] || continue
+        printf '%s\n' "$g"
+        ;;
+    esac
+  done < <(find "$1" -xdev \( -path "$1/.git" -o -path "$1/.git/*" \) -prune -o \
+            \( -name .git -o -type d -name '*.git' \) -print 2>/dev/null)
+}
+# 0 and a one-line reason when a repository inside the copy, or a submodule commit, is not in ~/git.
+# Looks in ignored folders and .lake too, and at bare repositories there. Those folders are build
+# junk only when they hold no unsaved commit.
+nested_unstored() {
+  local dir sha heads
+  while IFS= read -r dir; do
+    [ -n "$dir" ] || continue
+    if ! heads=$(repo_heads "$dir"); then echo "nested repository cannot be read ($dir)"; return 0; fi
+    while read -r sha; do
+      [ -n "$sha" ] || continue
+      if ! in_git_store "$sha"; then echo "nested repository has $sha not in ~/git ($dir)"; return 0; fi
+    done <<<"$(printf '%s\n' "$heads" | sort -u)"
+  done < <(each_nested_repo "$1")
+  if git -C "$1" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    while read -r sha; do
+      [ -n "$sha" ] || continue
+      if ! in_git_store "$sha"; then echo "submodule commit $sha not in ~/git"; return 0; fi
+    done < <(git -C "$1" ls-tree -r HEAD 2>/dev/null | awk '$2=="commit" {print $3}')
+  fi
+  return 1
 }
 BUILD_JUNK_RE='^!! (.*/)?(target|build|node_modules|__pycache__|\.pytest_cache|\.mypy_cache|zig-cache|zig-out|\.zig-cache|\.lake|venv|\.venv)/?$|\.pyc$'
 
@@ -305,11 +387,17 @@ is_cargo_target() {
     { [ -d "$1/debug" ] || [ -d "$1/release" ] || [ -f "$1/.rustc_info.json" ]; }
 }
 class1() {
-  local list="$TMPD/c1" d prev="" lf min_age
+  local list="$TMPD/c1" d prev="" lf min_age scan_machine=1
+  # A scratch-home test must not walk the machine's /tmp or CI lanes. The same
+  # switch on the real home is ignored, so it cannot turn those scans off there.
+  if [ -n "${SPARK_CLEANUP_OFFLINE:-}" ] && [ "$H" != "$(getent passwd "$(id -un)" | cut -d: -f6)" ]; then
+    scan_machine=0
+    log "class1 SKIP offline scratch home: not scanning /tmp/sweep or /var/lib/aien-run"
+  fi
   {
     find "$H/workspace" -maxdepth 5 -name CACHEDIR.TAG -printf '%h\n' 2>/dev/null
     find "$H/work" -maxdepth 6 -name CACHEDIR.TAG -printf '%h\n' 2>/dev/null
-    find /tmp/sweep -maxdepth 5 -name CACHEDIR.TAG -printf '%h\n' 2>/dev/null
+    [ "$scan_machine" = 1 ] && find /tmp/sweep -maxdepth 5 -name CACHEDIR.TAG -printf '%h\n' 2>/dev/null
     find "$H/handoffs/hive/factory-bays" -maxdepth 6 -name CACHEDIR.TAG -printf '%h\n' 2>/dev/null
     find "$H/.claude/jobs" -maxdepth 7 -name CACHEDIR.TAG -printf '%h\n' 2>/dev/null
     find "$H/.cache" -maxdepth 3 -name CACHEDIR.TAG -printf '%h\n' 2>/dev/null
@@ -320,7 +408,7 @@ class1() {
     prev="$d"
     [ -L "$d" ] && continue
     is_cargo_target "$d" || continue
-    [ -n "$(find "$d" -name .git -print -quit 2>/dev/null)" ] && { log "class1 SKIP has-git $d"; continue; }
+    [ -n "$(each_nested_repo "$d" | head -1)" ] && { log "class1 SKIP has-git $d"; continue; }
     under_only "$d" || continue
     if protected_path "$d"; then log "class1 SKIP protected $d"; continue; fi
     if in_use "$d" || in_use "$(dirname "$d")"; then log "class1 SKIP in-use $d"; continue; fi
@@ -331,6 +419,7 @@ class1() {
   done < "$list"
 
   # CI judge lanes: /var/lib/aien-run/target/<repo>/<lane>; only with the lane lock free
+  [ "$scan_machine" = 1 ] || return
   [ ${#ONLY[@]} -gt 0 ] && return
   [ -n "$SUDO" ] || { log "class1 SKIP aien-run (no sudo)"; return; }
   local LK="$H/.local/state/aien-local-ci/locks/target"
@@ -389,11 +478,10 @@ class2() {
       if protected_path "$wt"; then log "class2 SKIP protected $wt"; continue; fi
       if in_use "$wt"; then log "class2 SKIP in-use $wt"; continue; fi
       if recent "$wt" 1440; then log "class2 SKIP modified<24h $wt"; continue; fi
-      if [ -n "$(git -C "$wt" status --porcelain 2>/dev/null)" ]; then log "class2 SKIP dirty $wt"; continue; fi
-      local bad
-      bad=$(git -C "$wt" status --porcelain --ignored 2>/dev/null | grep '^!! ' | grep -vE "$BUILD_JUNK_RE" | head -1)
-      if [ -n "$bad" ]; then log "class2 SKIP ignored-nonbuild ($bad) $wt"; continue; fi
-      local inner; inner=$(find "$wt" -xdev -mindepth 2 -name .git -print -quit 2>/dev/null)
+      local why
+      why=$(copy_unsaved "$wt") || true
+      if [ -n "$why" ]; then log "class2 SKIP unsaved ($why) $wt"; continue; fi
+      local inner; inner=$(each_nested_repo "$wt" | head -1)
       if [ -n "$inner" ]; then log "class2 SKIP nested-repo (${inner%/.git}) $wt"; continue; fi
       local head
       head=$(git -C "$wt" rev-parse --verify -q 'HEAD^{commit}' 2>/dev/null)
@@ -547,18 +635,19 @@ class8() {
     in_use "$r" && continue
     recent "$r" "$idle_min" && continue
     # anything git cannot answer is "unreadable", never "leftover": an unanswered check is not a saved copy
-    if ! heads=$(repo_heads "$r") || ! dirty=$(git -C "$r" status --porcelain 2>/dev/null) \
-       || ! ign=$(git -C "$r" status --porcelain --ignored 2>/dev/null); then
+    if ! heads=$(repo_heads "$r"); then
       kind=unreadable; why="git cannot read it (broken worktree, missing main clone, other owner): check by hand before anything is removed"
     else
       bad=0
       while read -r f; do [ -n "$f" ] && ! in_git_store "$f" && bad=$((bad+1)); done <<<"$(sort -u <<<"$heads")"
-      ign=$(grep '^!! ' <<<"$ign" | grep -vE "$BUILD_JUNK_RE" | head -1)
-      if [ "$bad" -gt 0 ]; then kind=unstored; why="$bad local ref(s) (branch, stash or tag) not in ~/git: land the work or archive it"
-      elif [ -n "$dirty" ]; then kind=dirty; why="uncommitted changes: commit and land them, or archive"
-      elif [ -n "$ign" ]; then kind=dirty; why="ignored files that are not build output (${ign#!! }): save or archive them"
+      local nest uns
+      nest=$(nested_unstored "$r") || true
+      uns=$(copy_unsaved "$r") || true
+      if [ "$bad" -gt 0 ]; then kind=unstored; why="$bad ref(s) not in ~/git (branch, stash, tag or remote-tracking): land the work or archive it"
+      elif [ -n "$nest" ]; then kind=unstored; why="$nest"
+      elif [ -n "$uns" ]; then kind=dirty; why="$uns"
       elif [ -f "$r/.git" ]; then kind=leftover; why="clean linked worktree, its HEAD in ~/git (its branches live in the main clone and are not judged here), only build output ignored: finished work left its copy, remove it"
-      else kind=leftover; why="clean, every local ref in ~/git, only build output ignored: finished work left its copy, archive and remove it"; fi
+      else kind=leftover; why="clean, every ref in ~/git, nested commits in ~/git, only build output ignored: finished work left its copy, archive and remove it"; fi
     fi
     if [ $main = 1 ] && [ "$kind" = leftover ]; then log "class8 SKIP main-clone $r (clean, every local ref in ~/git)"; mainskip=$((mainskip+1)); continue; fi
     [ $main = 1 ] && why="main clone: $why"
