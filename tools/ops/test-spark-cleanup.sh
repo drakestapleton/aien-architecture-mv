@@ -28,7 +28,11 @@
 #   store-empty an empty store gives the loud "holds no bare repositories" ALARM and one board line,
 #               not a second one on the next run
 #   c8-emerg    with free space under 10 % an --apply run still runs class 8 on its own, after the rest
-#   c8-main     the main clone ~/workspace/proj (no '-' in its name) is a shared reference copy: no ALARM
+#   c8-main     main clones (no '-' in the name, real .git folder) are still checked: the clean one
+#               ~/workspace/ref is a SKIP main-clone line, ~/workspace/proj (branches not in the store) is an
+#               ALARM marked "main clone"
+#   c8-drymark  a dry --classes 8 run neither reads nor writes the --apply scan's start and finish marks
+#   c2-nested   an idle clean worktree holding a repository in an ignored folder (.lake/packages/dep) is kept
 #   c8-inner    an idle repository inside a copy that is in use now is not reported on its own
 #   c8-hook     the test in-use hook says in the log that it was used
 #   c8-agentwt  an idle linked worktree inside the main clone (proj/.claude/worktrees/agent-x) is reported
@@ -73,6 +77,10 @@ setup() {  # $1 scratch home
   git clone -q "$h/git/proj.git" "$h/work/lane/stash"; echo s >> "$h/work/lane/stash/a"; git -C "$h/work/lane/stash" stash -q
   git clone -q "$h/git/proj.git" "$h/work/lane/ign"; mkdir -p "$h/work/lane/ign/secret"; echo r > "$h/work/lane/ign/secret/results"
   echo secret/ >> "$h/work/lane/ign/.git/info/exclude"
+  git clone -q "$h/git/proj.git" "$h/workspace/ref"
+  echo .lake/ >> "$h/workspace/proj/.git/info/exclude"
+  git -C "$h/workspace/proj" worktree add -q -b wt-nest "$h/workspace/wt-nest" main
+  git init -q -b main "$h/workspace/wt-nest/.lake/packages/dep"
   git -C "$h/workspace/proj" worktree add -q -b agent-x "$h/workspace/proj/.claude/worktrees/agent-x" main
   git -C "$h/workspace/proj" worktree add -q -b kflow "$h/workspace/kflow" main
   git -C "$h/workspace/proj" worktree add -q -b wt-orphan "$h/work/lane/orphan" main
@@ -129,6 +137,12 @@ suite() {  # $1 spark-cleanup copy; sets pass/fail
   # c8-unfin: a scan that started and never wrote its finish mark
   echo 1700000000 > "$h/.local/state/spark-cleanup/class8.started"; rm -f "$h/.local/state/spark-cleanup/class8.finished"
   SPARK_CLEANUP_CLASS8_MAX_H=1.5 run "$h" "$s" --apply --classes 8; cp "$h/out.txt" "$h/unfin.txt"
+  # c8-drymark: a dry run with an unfinished --apply mark left in place
+  echo 1700000001 > "$h/.local/state/spark-cleanup/class8.started"; rm -f "$h/.local/state/spark-cleanup/class8.finished"
+  local bd0; bd0=$(wc -l < "$h/handoffs/BOARD.md")
+  run "$h" "$s" --classes 8; cp "$h/out.txt" "$h/drymark.txt"
+  local dm_ok=1; [ "$(cat "$h/.local/state/spark-cleanup/class8.started")" = 1700000001 ] && [ "$(wc -l < "$h/handoffs/BOARD.md")" = "$bd0" ] && ! has "$h/drymark.txt" 'did not finish' && dm_ok=0
+  cp "$h/.local/state/spark-cleanup/class8.started" "$h/.local/state/spark-cleanup/class8.finished"   # leave no unfinished mark for later cases
   # c8-only8: --apply --classes 8 through the real wrapper (fake quiet-build present)
   local qb0; qb0=$(wc -l < "$h/qb.log" 2>/dev/null || echo 0)
   HOME=$h SPARK_CLEANUP_TEST_FREE_PCT=50 SPARK_CLEANUP_GITSTORE=$h/git SPARK_CLEANUP_BOARD=$h/handoffs/BOARD.md \
@@ -160,7 +174,9 @@ suite() {  # $1 spark-cleanup copy; sets pass/fail
   check c8-nolock "$(grep -q '^qb SKIP8=1 ' "$h/qb.log" 2>/dev/null && has "$h/nolock.txt" 'APPLY classes=2 ' && has "$h/nolock.txt" 'APPLY classes=8 ' && ! has "$h/nolock.txt" 'APPLY classes=2,8'; echo $?)"
   check store-empty "$(has "$e/out.txt" 'holds no bare repositories' && has "$e/out2.txt" 'holds no bare repositories' && [ "$(grep -c 'holds no bare repositories' "$e/handoffs/BOARD.md")" = 1 ]; echo $?)"
   check c8-emerg "$(has "$h/emerg.txt" 'APPLY classes=2 ' && has "$h/emerg.txt" 'APPLY classes=8 ' && ! has "$h/emerg.txt" 'APPLY classes=2,8' && [ "$(wc -l < "$h/qb.log")" = "$qbn" ]; echo $?)"
-  check c8-main "$( ! has "$h/dry.txt" 'class8 ALARM [a-z]+-copy .*/workspace/proj '; echo $?)"
+  check c8-main "$(has "$h/dry.txt" 'class8 SKIP main-clone .*/workspace/ref ' && has "$h/dry.txt" 'class8 ALARM unstored-copy .*/workspace/proj .*main clone:' && ! has "$h/dry.txt" 'class8 ALARM [a-z]+-copy .*/workspace/ref '; echo $?)"
+  check c8-drymark "$dm_ok"
+  check c2-nested "$( [ -d "$h/workspace/wt-nest" ] && has "$o" 'class2 SKIP nested-repo .*wt-nest'; echo $?)"
   check c8-inner "$( ! has "$o" 'class8 ALARM .*/work/lane/active'; echo $?)"
   check c8-agentwt "$(has "$h/dry.txt" 'class8 ALARM [a-z]+-copy .*/workspace/proj/\.claude/worktrees/agent-x '; echo $?)"
   check c8-dashwt "$(has "$h/dry.txt" 'class8 ALARM [a-z]+-copy .*/workspace/kflow '; echo $?)"
@@ -198,6 +214,9 @@ for spec in \
   'inner-wt|s/if \[ \$inner = 1 \] && ! grep -qs [^\n]*; then continue; fi/[ \$inner = 1 ] \&\& continue/' \
   'main-by-name|s/if \[ -d "\$r\/\.git" \]; then (case [^\n]*esac); fi/$1/' \
   'no-unfinished|s/if \[ -n "\$_st" \] && \[ "\$\(cat "\$STATE\/class8\.finished" 2>\/dev\/null\)" != "\$_st" \]; then/if false; then/' \
+  'dry-marks|s/if \[ "\$CLASSES" = 8 \] && \[ \$APPLY = 1 \]; then/if [ "\$CLASSES" = 8 ]; then/' \
+  'no-nested-check|s/      if \[ -n "\$inner" \]; then log "class2 SKIP nested-repo[^\n]*\n//' \
+  'main-silent|s/"\$H"\/workspace\/\*\) main=1 ;;/"\$H"\/workspace\/*) continue ;;/' \
   'index-write|s/export GIT_OPTIONAL_LOCKS=0\n//' \
   'no-board|s/      "\$\(date -u \+%FT%H:%MZ\)" "\$n" "\$\(human "\$bytes"\)" "\$LOG" >> "\$board"/      "x" "\$n" "x" "x" >\/dev\/null/' ; do
   name=${spec%%|*}; expr=${spec#*|}

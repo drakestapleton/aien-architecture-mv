@@ -141,28 +141,29 @@ human() { awk -v b="$1" 'BEGIN{ printf "%.1fG", b/1e9 }'; }
 C8MAX_H="${SPARK_CLEANUP_CLASS8_MAX_H:-6}"
 if ! [[ "$C8MAX_H" =~ ^[0-9]+$ ]]; then log "ALARM bad SPARK_CLEANUP_CLASS8_MAX_H='$C8MAX_H' (whole hours expected); using 6"; C8MAX_H=6; fi
 # one run at a time
-if [ "$CLASSES" = 8 ]; then exec 9>"$STATE/class8.lock"; else exec 9>"$STATE/run.lock"; fi
+# a dry class 8 run (a person or reviewer looking) has its own lock and never touches the
+# --apply run's marks, so it cannot block, or raise a false alarm about, the daily scan
+if [ "$CLASSES" = 8 ]; then exec 9>"$STATE/class8$( [ $APPLY = 1 ] || echo -dry).lock"; else exec 9>"$STATE/run.lock"; fi
 if ! flock -n 9; then
   echo "spark-cleanup already running" >&2
   if [ "$CLASSES" = 8 ]; then
     # a class 8 scan still running: say so in the log, and alarm once if it has run past the threshold
-    _st=$(cat "$STATE/class8.started" 2>/dev/null); _now=$(date +%s); _max=$(( C8MAX_H * 3600 ))
+    _st=$( [ $APPLY = 1 ] && cat "$STATE/class8.started" 2>/dev/null); _now=$(date +%s); _max=$(( C8MAX_H * 3600 ))
     echo "$(date +%FT%T) class8 SKIP: a class 8 scan started $( [ -n "$_st" ] && echo "$(( (_now-_st)/60 )) min ago" || echo "at an unknown time") still holds class8.lock" >> "$LOG"
-    if [ -n "$_st" ] && [ $((_now-_st)) -gt "$_max" ] && [ "$(cat "$STATE/class8-stale-posted" 2>/dev/null)" != "$_st" ]; then
+    if [ $APPLY = 1 ] && [ -n "$_st" ] && [ $((_now-_st)) -gt "$_max" ] && [ "$(cat "$STATE/class8-stale-posted" 2>/dev/null)" != "$_st" ]; then
       echo "$(date +%FT%T) class8 ALARM scan running longer than $C8MAX_H h (threshold SPARK_CLEANUP_CLASS8_MAX_H); the leftover-copy alarm is stale" >> "$LOG"
       printf '%s ALARM spark-cleanup class8 to all: the leftover-copy scan started %s has run longer than %s h, so its alarm is stale; see %s.\n' "$(date -u +%FT%H:%MZ)" "$(date -d @"$_st" -u +%FT%H:%MZ)" "$C8MAX_H" "$LOG" >> "${SPARK_CLEANUP_BOARD:-$H/handoffs/BOARD.md}" && echo "$_st" > "$STATE/class8-stale-posted"
     fi
   fi
   exit 0
 fi
-if [ "$CLASSES" = 8 ]; then
+if [ "$CLASSES" = 8 ] && [ $APPLY = 1 ]; then
   # the previous scan was killed (service timeout, crash) if it started and never wrote its finish mark
   _st=$(cat "$STATE/class8.started" 2>/dev/null)
   if [ -n "$_st" ] && [ "$(cat "$STATE/class8.finished" 2>/dev/null)" != "$_st" ]; then
     log "class8 ALARM the previous leftover-copy scan (started $(date -d @"$_st" +%FT%T)) did not finish; its alarm was never written"
-    [ $APPLY = 1 ] && [ "$(cat "$STATE/class8-stale-posted" 2>/dev/null)" != "$_st" ] && printf '%s ALARM spark-cleanup class8 to all: the leftover-copy scan started %s did not finish (killed or crashed), so no alarm came from it; see %s.\n' "$(date -u +%FT%H:%MZ)" "$(date -d @"$_st" -u +%FT%H:%MZ)" "$LOG" >> "${SPARK_CLEANUP_BOARD:-$H/handoffs/BOARD.md}" && echo "$_st" > "$STATE/class8-stale-posted"
+    [ "$(cat "$STATE/class8-stale-posted" 2>/dev/null)" != "$_st" ] && printf '%s ALARM spark-cleanup class8 to all: the leftover-copy scan started %s did not finish (killed or crashed), so no alarm came from it; see %s.\n' "$(date -u +%FT%H:%MZ)" "$(date -d @"$_st" -u +%FT%H:%MZ)" "$LOG" >> "${SPARK_CLEANUP_BOARD:-$H/handoffs/BOARD.md}" && echo "$_st" > "$STATE/class8-stale-posted"
   fi
-  date +%s > "$STATE/class8.started"
 fi
 
 if [ -n "$IF_BELOW" ]; then
@@ -392,6 +393,8 @@ class2() {
       local bad
       bad=$(git -C "$wt" status --porcelain --ignored 2>/dev/null | grep '^!! ' | grep -vE "$BUILD_JUNK_RE" | head -1)
       if [ -n "$bad" ]; then log "class2 SKIP ignored-nonbuild ($bad) $wt"; continue; fi
+      local inner; inner=$(find "$wt" -xdev -mindepth 2 -name .git -print -quit 2>/dev/null)
+      if [ -n "$inner" ]; then log "class2 SKIP nested-repo (${inner%/.git}) $wt"; continue; fi
       local head
       head=$(git -C "$wt" rev-parse --verify -q 'HEAD^{commit}' 2>/dev/null)
       if [ -z "$head" ] || ! in_git_store "$head" >/dev/null; then log "class2 SKIP not-in-git-store $wt"; continue; fi
@@ -518,6 +521,10 @@ class8() {
   local idle_min=$((3*1440))
   local roots=() ; for r in "$H/workspace" "$H/work" "$H/.claude/jobs"; do [ -d "$r" ] && roots+=("$r"); done
   [ ${#roots[@]} -gt 0 ] || return 0
+  # start mark for the --apply scan only (written here, after every early exit that is not a failure)
+  local marks=0; [ "$CLASSES" = 8 ] && [ $APPLY = 1 ] && marks=1
+  [ $marks = 1 ] && date +%s > "$STATE/class8.started"
+  local mainskip=0 main
   : > "$TMPD/c8kinds"; : > "$TMPD/c8dirs"
   find "${roots[@]}" -xdev -maxdepth 6 \( -name node_modules -o -name target -o -name .lake -o -name venv -o -name .venv \) -prune \
        -o -name .git -print -prune 2>/dev/null | sed 's#/\.git$##' | sort > "$TMPD/c8"
@@ -531,9 +538,11 @@ class8() {
     # wherever it sits: agents' isolated worktrees live inside the main clones
     if [ $inner = 1 ] && ! grep -qs '^gitdir: .*/\.git/worktrees/' "$r/.git"; then continue; fi
     root[$r]=1
-    # the main clones (~/workspace/<name> without a '-', with a real .git folder) are the shared
-    # reference copies, not task copies
-    if [ -d "$r/.git" ]; then case "$r" in "$H"/workspace/*/*) ;; "$H"/workspace/*-*) ;; "$H"/workspace/*) continue ;; esac; fi
+    # main clones, as the standing rules name them (~/workspace/<name> without a '-', here also with a
+    # real .git folder), are shared reference copies: they are still checked, and work at risk in one is
+    # reported, but a clean one is a SKIP line, not a "remove it" alarm
+    main=0
+    if [ -d "$r/.git" ]; then case "$r" in "$H"/workspace/*/*) ;; "$H"/workspace/*-*) ;; "$H"/workspace/*) main=1 ;; esac; fi
     protected_path "$r" && continue
     in_use "$r" && continue
     recent "$r" "$idle_min" && continue
@@ -551,6 +560,8 @@ class8() {
       elif [ -f "$r/.git" ]; then kind=leftover; why="clean linked worktree, its HEAD in ~/git (its branches live in the main clone and are not judged here), only build output ignored: finished work left its copy, remove it"
       else kind=leftover; why="clean, every local ref in ~/git, only build output ignored: finished work left its copy, archive and remove it"; fi
     fi
+    if [ $main = 1 ] && [ "$kind" = leftover ]; then log "class8 SKIP main-clone $r (clean, every local ref in ~/git)"; mainskip=$((mainskip+1)); continue; fi
+    [ $main = 1 ] && why="main clone: $why"
     sz=$(size_of "$r"); sz=${sz:-0}
     log "class8 ALARM $kind-copy $(human "$sz") $r (idle 3d+, nothing open; $why)"
     echo "$kind $r" >> "$TMPD/c8kinds"; echo "$r" >> "$TMPD/c8dirs"
@@ -572,9 +583,9 @@ class8() {
   if ! [[ "$thr_gb" =~ ^[0-9]+$ ]]; then
     log "class8 ALARM bad SPARK_CLEANUP_LEFTOVER_ALARM_GB='$thr_gb' (whole GB expected); using 1"; thr_gb=1
   fi
-  log "class8 total: $n copies, $(human "$bytes") ($(cut -d' ' -f1 "$TMPD/c8kinds" | sort | uniq -c | awk '{printf "%s%s %s", (NR>1?", ":""), $2, $1}')) (alarm threshold ${thr_gb}G)"
+  log "class8 total: $n copies, $(human "$bytes") ($(cut -d' ' -f1 "$TMPD/c8kinds" | sort | uniq -c | awk '{printf "%s%s %s", (NR>1?", ":""), $2, $1}')) (alarm threshold ${thr_gb}G); clean main clones skipped: $mainskip"
   log "class8 scan took $(( ($(date +%s) - t0) / 60 )) min"
-  [ "$CLASSES" = 8 ] && cp "$STATE/class8.started" "$STATE/class8.finished" 2>/dev/null
+  [ $marks = 1 ] && cp "$STATE/class8.started" "$STATE/class8.finished" 2>/dev/null
   # one board line when the set of copies changes, not on every run
   local sig last; sig=$(sort "$TMPD/c8kinds" | sha256sum | cut -c1-16); last=$(cat "$STATE/class8-posted" 2>/dev/null)
   if [ "$n" -gt 0 ] && [ "$bytes" -ge $((thr_gb*1000000000)) ] && [ $APPLY = 1 ] && [ ${#ONLY[@]} -eq 0 ]; then
@@ -582,7 +593,7 @@ class8() {
       log "class8 board line not repeated: same set of copies as the last post ($sig)"
     else
       local board="${SPARK_CLEANUP_BOARD:-$H/handoffs/BOARD.md}"
-      printf '%s ALARM spark-cleanup class8 to all: %d agent copies left behind, %s (finished tasks that did not delete their copies, work not in ~/git, unreadable copies, or copied model weights). Each line: %s. Owners: land, archive to ~/archive/agent-work/<name>.tar.zst, then remove.\n' \
+      printf '%s ALARM spark-cleanup class8 to all: %d agent copies left behind, %s (finished tasks that did not delete their copies, work not in ~/git, unreadable copies, or copied model weights). Each line: %s. Owners: save it as the clean-up rule says (landed, or a bundle in your lane records), then delete the copy; a copy whose owner has gone is archived to ~/archive/agent-work/<name>.tar.zst first.\n' \
         "$(date -u +%FT%H:%MZ)" "$n" "$(human "$bytes")" "$LOG" >> "$board" && echo "$sig" > "$STATE/class8-posted"
     fi
   fi
