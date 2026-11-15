@@ -13,8 +13,10 @@
 #      SHA per lane stays, the per-SHA lock (else the lane lock) must be free,
 #      dirs over 5 GiB are logged REVIEW and never removed. Reported as its own
 #      class so dry-classes can hold it dry ("1s") while class 1 stays live.
-#   2  git worktrees under ~/workspace: clean, fully pushed, untouched 24 h,
-#      only ignored build junk inside -> git worktree remove + prune.
+#   2  git worktrees under ~/workspace: clean, HEAD present in ~/git (reachable
+#      from a ref of a bare repository there; a push to some other remote does
+#      not count), untouched 24 h, only ignored build junk inside
+#      -> git worktree remove + prune.
 #   3  docker dangling images and build cache.
 #   4  caches: ~/.cargo/registry/cache files unread 30 d, rustup toolchains
 #      not default and not named by any rust-toolchain file, ~/.cache entries
@@ -23,6 +25,16 @@
 #   6  journald vacuum to 2G.
 #   7  models: REPORT ONLY. Never deletes. Use the manual procedure in the
 #      handoff (write repo id + revision to ~/models/DELETED.md first).
+#   8  leftover-copy ALARM: REPORT ONLY. Never deletes. Git clones and
+#      worktrees under ~/workspace, ~/work and ~/.claude/jobs with nothing
+#      written for 3 days and nothing open: "leftover" when clean and every
+#      branch head is in ~/git (a finished task left its copy behind),
+#      "unstored" when a branch head is not in ~/git (work at risk), "dirty"
+#      when uncommitted changes remain. Also model weight files over 1 GiB
+#      (.safetensors .gguf .pt .pth) copied there instead of linked. When the
+#      total reaches SPARK_CLEANUP_LEFTOVER_ALARM_GB (default 1) an --apply run
+#      posts one line to the team board (SPARK_CLEANUP_BOARD, default
+#      ~/handoffs/BOARD.md). Runs by default.
 #
 # Hard rules applied to every candidate:
 #   - skipped if any running process has a file open in it, or uses it as
@@ -34,7 +46,7 @@
 #   - skipped if its name is in the protected list (active agent names)
 #
 # Usage:
-#   spark-cleanup                      dry run, all classes 1-6
+#   spark-cleanup                      dry run, classes 1-6 and 8
 #   spark-cleanup --apply              delete
 #   spark-cleanup --apply --if-below 20   only run if free space < 20 %
 #   spark-cleanup --apply --only DIR [--only DIR]   end of session: only
@@ -85,7 +97,7 @@ while [ $# -gt 0 ]; do
   shift
 done
 if [ -z "$CLASSES" ]; then
-  if [ ${#ONLY[@]} -gt 0 ]; then CLASSES="1,2"; else CLASSES="1,2,3,4,5,6"; fi
+  if [ ${#ONLY[@]} -gt 0 ]; then CLASSES="1,2"; else CLASSES="1,2,3,4,5,6,8"; fi
 fi
 
 H="$HOME"
@@ -165,6 +177,31 @@ under_only() {
   return 1
 }
 want() { case ",$CLASSES," in *",$1,"*) return 0 ;; esac; return 1; }
+
+# "pushed" means present in the git store Interplane serves (~/git/<name>.git),
+# not merely on some remote: a push to a scratch bare repo or a GitHub mirror
+# leaves no copy where the team reads code from.
+GITSTORE="${SPARK_CLEANUP_GITSTORE:-$H/git}"
+# git status must not rewrite a copy's index: that write would make the copy look
+# recently touched and hide it from the idle checks of the next run
+export GIT_OPTIONAL_LOCKS=0
+in_git_store() {  # $1 commit sha; true (and prints the bare repo) if a ref there reaches it
+  local b
+  for b in "$GITSTORE"/*.git; do
+    [ -d "$b" ] || continue
+    git -C "$b" cat-file -e "$1^{commit}" 2>/dev/null || continue
+    [ -n "$(git -C "$b" for-each-ref --contains "$1" --count=1 2>/dev/null)" ] && { echo "$b"; return 0; }
+  done
+  return 1
+}
+unstored_heads() {  # $1 repo dir: prints each branch head (and HEAD) not in the git store
+  # a linked worktree (.git is a file) shares its branches with the main clone:
+  # only its own HEAD is its work; the main clone answers for the branches
+  local s all=1
+  [ -f "$1/.git" ] && all=0
+  { git -C "$1" rev-parse --verify -q 'HEAD^{commit}'; [ $all = 1 ] && git -C "$1" for-each-ref --format='%(objectname)' refs/heads; } 2>/dev/null |
+    sort -u | while read -r s; do [ -n "$s" ] && ! in_git_store "$s" >/dev/null && echo "$s"; done
+}
 
 # classes listed in ~/.config/spark-cleanup/dry-classes (comma list, e.g. "5") or
 # SPARK_CLEANUP_DRY_CLASSES only log WOULD-REMOVE, even under --apply
@@ -289,22 +326,18 @@ class2() {
       bad=$(git -C "$wt" status --porcelain --ignored 2>/dev/null | grep '^!! ' |
             grep -vE '^!! (.*/)?(target|build|node_modules|__pycache__|\.pytest_cache|\.mypy_cache|zig-cache|zig-out|\.zig-cache)/?$|\.pyc$' | head -1)
       if [ -n "$bad" ]; then log "class2 SKIP ignored-nonbuild ($bad) $wt"; continue; fi
-      local up unpushed
-      if up=$(git -C "$wt" rev-parse --abbrev-ref '@{u}' 2>/dev/null); then
-        unpushed=$(git -C "$wt" rev-list "@{u}..HEAD" 2>/dev/null | head -1)
-      else
-        unpushed=$([ -z "$(git -C "$wt" branch -r --contains HEAD 2>/dev/null | head -1)" ] && echo none-on-remote)
-      fi
-      if [ -n "$unpushed" ]; then log "class2 SKIP unpushed $wt"; continue; fi
+      local head
+      head=$(git -C "$wt" rev-parse --verify -q 'HEAD^{commit}' 2>/dev/null)
+      if [ -z "$head" ] || ! in_git_store "$head" >/dev/null; then log "class2 SKIP not-in-git-store $wt"; continue; fi
       local sz; sz=$(size_of "$wt"); sz=${sz:-0}
       if [ $APPLY = 1 ]; then
         if git -C "$repo" worktree remove "$wt" 2>>"$LOG"; then
-          log "class2 REMOVED $(human "$sz") $wt (clean, pushed, idle 24h)"; TOTAL=$((TOTAL+sz))
+          log "class2 REMOVED $(human "$sz") $wt (clean, HEAD in ~/git, idle 24h)"; TOTAL=$((TOTAL+sz))
         else
           log "class2 FAILED git worktree remove $wt"
         fi
       else
-        log "class2 WOULD-REMOVE $(human "$sz") $wt (clean, pushed, idle 24h)"; TOTAL=$((TOTAL+sz))
+        log "class2 WOULD-REMOVE $(human "$sz") $wt (clean, HEAD in ~/git, idle 24h)"; TOTAL=$((TOTAL+sz))
       fi
     done < "$TMPD/wt"
     [ $APPLY = 1 ] && git -C "$repo" worktree prune 2>/dev/null
@@ -411,7 +444,49 @@ class7() {
   done
 }
 
-for c in 1 2 3 4 5 6 7; do
+# ---------------- class 8: leftover copies (ALARM, report only) ----------------
+# Agents must delete their own copies when their task is done (omega-harness rule
+# clean-up-after-yourself). This class finds the ones that did not. It never deletes.
+class8() {
+  local root r g n=0 bytes=0 kind why sz bad dirty seen="" f
+  local idle_min=$((3*1440))
+  local roots=() ; for r in "$H/workspace" "$H/work" "$H/.claude/jobs"; do [ -d "$r" ] && roots+=("$r"); done
+  [ ${#roots[@]} -gt 0 ] || return 0
+  find "${roots[@]}" -xdev -maxdepth 6 \( -name node_modules -o -name target -o -name .lake -o -name venv -o -name .venv \) -prune \
+       -o -name .git -print -prune 2>/dev/null | sed 's#/\.git$##' | sort > "$TMPD/c8"
+  while read -r r; do
+    case "$r/" in "$GITSTORE"/*) continue ;; esac
+    if [ -n "$seen" ]; then case "$r/" in "$seen"/*) continue ;; esac; fi
+    protected_path "$r" && continue
+    in_use "$r" && continue
+    recent "$r" "$idle_min" && continue
+    seen="$r"
+    bad=$(unstored_heads "$r" | wc -l)
+    dirty=$(git -C "$r" status --porcelain 2>/dev/null | head -1)
+    if [ "$bad" -gt 0 ]; then kind=unstored; why="$bad branch head(s) not in ~/git: land the work or archive it"
+    elif [ -n "$dirty" ]; then kind=dirty; why="uncommitted changes: commit and land them, or archive"
+    else kind=leftover; why="clean, every branch head in ~/git: finished work left its copy, archive and remove it"; fi
+    sz=$(size_of "$r"); sz=${sz:-0}
+    log "class8 ALARM $kind-copy $(human "$sz") $r (idle 3d+, nothing open; $why)"
+    n=$((n+1)); bytes=$((bytes+sz))
+  done < "$TMPD/c8"
+  find "${roots[@]}" -xdev -type f -size +1G \( -name '*.safetensors' -o -name '*.gguf' -o -name '*.pt' -o -name '*.pth' \) -print 2>/dev/null > "$TMPD/c8m"
+  while read -r f; do
+    protected_path "$f" && continue
+    sz=$(stat -c %s -- "$f" 2>/dev/null); sz=${sz:-0}
+    log "class8 ALARM model-copy $(human "$sz") $f (model weights copied, not linked: keep one copy under ~/models and link to it)"
+    n=$((n+1)); bytes=$((bytes+sz))
+  done < "$TMPD/c8m"
+  local thr_gb="${SPARK_CLEANUP_LEFTOVER_ALARM_GB:-1}"
+  log "class8 total: $n leftover copies, $(human "$bytes") (alarm threshold ${thr_gb}G)"
+  if [ "$n" -gt 0 ] && [ "$bytes" -ge $((thr_gb*1000000000)) ] && [ $APPLY = 1 ] && [ ${#ONLY[@]} -eq 0 ]; then
+    local board="${SPARK_CLEANUP_BOARD:-$H/handoffs/BOARD.md}"
+    printf '%s ALARM spark-cleanup class8 to all: %d agent copies left behind, %s (finished tasks that did not delete their copies, work not in ~/git, or copied model weights). Each line: %s. Owners: land, archive to ~/archive/agent-work/<name>.tar.zst, then remove.\n' \
+      "$(date -u +%FT%H:%MZ)" "$n" "$(human "$bytes")" "$LOG" >> "$board"
+  fi
+}
+
+for c in 1 2 3 4 5 6 7 8; do
   want $c || continue
   b=$(free_bytes)
   "class$c"
