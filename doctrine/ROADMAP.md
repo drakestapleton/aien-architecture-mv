@@ -3,7 +3,7 @@
 ```text
 Document ID:     DOCTRINE-ROADMAP
 Classification:  Sovereign Machine Canonical Doctrine (Single Roadmap Source)
-Target Substrate: Complete Sovereign Stack (Atlas -> AIENOS -> AIEN / OMEGA / FORGE / AEGIS)
+Target Substrate: Complete Sovereign Stack (Atlas -> Aienux -> AIEN / OMEGA / FORGE / AEGIS)
 Status:          AUTHORITATIVE / CANONICAL
 ```
 

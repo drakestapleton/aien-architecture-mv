@@ -121,11 +121,11 @@ M19 CORRECTIVE QUALIFICATION
     ↓
 FORGE V1 BOUNDARY
     ↓
-AIENOS TRUST + IDENTITY
+Aienux TRUST + IDENTITY
     ↓
 OMEGA NUMERICS / TENSORS / AUTODIFF / OPTIMIZER
     ↓
-AIENOS NATIVE PATH (NEXT-PHASE-3 order) -> NATIVE INFERENCE -> PERSISTENT AGENT (networking runs beside it, not before it; decided 2026-10-08)
+Aienux NATIVE PATH (NEXT-PHASE-3 order) -> NATIVE INFERENCE -> PERSISTENT AGENT (networking runs beside it, not before it; decided 2026-10-08)
     ↓
 BELIEF / ESTIMATION FOUNDATION (ADR 0020: EST-0..EST-3 calibrated, then EST-4..EST-5 into World and the cost model after R16)
     ↓
@@ -630,7 +630,7 @@ The project is complete only when the clean-machine golden path works end-to-end
 ```text
 Power on
 → Atlas awakens
-→ AIENOS reconstructs trusted system state
+→ Aienux reconstructs trusted system state
 → Cortex restores durable memory
 → AIEN resumes
 → objective arrives
