@@ -1,0 +1,24 @@
+# tests/gates/arch-name-check.gate
+# ADR 0038: refuse new uses of the retired project names in the added lines of the change
+# (tools/name-check, seeded .om, built by the pinned compiler in tools/zero-legacy/omega.pin).
+# Runs the tool's four fixtures first; NOT_RUN without AIEN_OMC.
+gate: ARCH-NAME-CHECK
+manifest_version: 2
+owner: aien-architecture
+requires:
+  - host
+inputs:
+  - tools/name-check/
+  - tools/zero-legacy/sha256.om
+  - tools/zero-legacy/omega.pin
+  - tests/gates/
+run:
+  exec: tests/gates/run.sh
+  args: ["name-check"]
+expects:
+  exit: 0
+  observe: ["name_check_fixtures == 4", "name_check_exit == 0"]
+  verdict: PASS
+timeout: 5m
+exactness: EXACT
+cache_scope: machine

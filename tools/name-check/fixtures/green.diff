@@ -1,0 +1,175 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+new file mode 100644
+index 0000000..bd87921
+--- /dev/null
++++ b/CHANGELOG.md
+@@ -0,0 +1 @@
++- Aienix renamed
+diff --git a/CONTEXT.md b/CONTEXT.md
+new file mode 100644
+index 0000000..40c0e77
+--- /dev/null
++++ b/CONTEXT.md
+@@ -0,0 +1 @@
++_Avoid_: Aienix (retired), AIENOS, Aienos
+diff --git a/README.md b/README.md
+new file mode 100644
+index 0000000..546b47a
+--- /dev/null
++++ b/README.md
+@@ -0,0 +1 @@
++Aienux is the kernel; AienOS is the whole system; AIEN is the agent.
+diff --git a/docs/adr/0038-names.md b/docs/adr/0038-names.md
+new file mode 100644
+index 0000000..54b4c57
+--- /dev/null
++++ b/docs/adr/0038-names.md
+@@ -0,0 +1 @@
++the ADR names AIENOS and Aienix on purpose
+diff --git a/docs/archive/old.md b/docs/archive/old.md
+new file mode 100644
+index 0000000..3c5b1eb
+--- /dev/null
++++ b/docs/archive/old.md
+@@ -0,0 +1 @@
++archived AIENOS text
+diff --git a/docs/c.md b/docs/c.md
+new file mode 100644
+index 0000000..8a341d3
+--- /dev/null
++++ b/docs/c.md
+@@ -0,0 +1 @@
++the banner `AIENOS Standalone` appears
+diff --git a/docs/efi.md b/docs/efi.md
+new file mode 100644
+index 0000000..85216d5
+--- /dev/null
++++ b/docs/efi.md
+@@ -0,0 +1 @@
++copy it to \EFI\AIENOS\MODEL.MAP on the ESP
+diff --git a/docs/history/h.md b/docs/history/h.md
+new file mode 100644
+index 0000000..ca53ce6
+--- /dev/null
++++ b/docs/history/h.md
+@@ -0,0 +1 @@
++AIENOS history
+diff --git a/docs/labels.md b/docs/labels.md
+new file mode 100644
+index 0000000..f6c8aaa
+--- /dev/null
++++ b/docs/labels.md
+@@ -0,0 +1 @@
++AIENOS/M5/CORTEX-V1 and AIENOS-PKV-ENVID-KEY-V1 stay
+diff --git a/docs/marks.md b/docs/marks.md
+new file mode 100644
+index 0000000..7ab42f6
+--- /dev/null
++++ b/docs/marks.md
+@@ -0,0 +1 @@
++@AIENOS $AIENOS /AIENOS .AIENOS -AIENOS AIENOS_X AIENOS-X1 AIENOS-9 AIENOS.y AIENOS/Z
+diff --git a/docs/o.md b/docs/o.md
+new file mode 100644
+index 0000000..c48b592
+--- /dev/null
++++ b/docs/o.md
+@@ -0,0 +1 @@
++Expect the rescue banner `AIENOS Standalone Hardware
+diff --git a/docs/q.md b/docs/q.md
+new file mode 100644
+index 0000000..f47c38f
+--- /dev/null
++++ b/docs/q.md
+@@ -0,0 +1 @@
++the roadmap says "Nothing in AIENOS is qualified" today
+diff --git a/docs/u.md b/docs/u.md
+new file mode 100644
+index 0000000..9051f7e
+--- /dev/null
++++ b/docs/u.md
+@@ -0,0 +1 @@
++he wrote “Aienix is the tree” once
+diff --git a/docs/v.md b/docs/v.md
+new file mode 100644
+index 0000000..c240769
+--- /dev/null
++++ b/docs/v.md
+@@ -0,0 +1 @@
++docs/AIENOS.md
+diff --git a/docs/w.md b/docs/w.md
+new file mode 100644
+index 0000000..f67aae7
+--- /dev/null
++++ b/docs/w.md
+@@ -0,0 +1 @@
++see github.com/aien-dev/aienix and www.aienos.com and crates/aienos-kernel
+diff --git a/docs/z.md b/docs/z.md
+new file mode 100644
+index 0000000..0bc7741
+--- /dev/null
++++ b/docs/z.md
+@@ -0,0 +1 @@
++AienOS = Aienux + Omega + runtime + Allen
+diff --git a/evidence/r.md b/evidence/r.md
+new file mode 100644
+index 0000000..d6efb79
+--- /dev/null
++++ b/evidence/r.md
+@@ -0,0 +1 @@
++AIENOS receipt text, Aienix era
+diff --git a/receipts/a.md b/receipts/a.md
+new file mode 100644
+index 0000000..3abc004
+--- /dev/null
++++ b/receipts/a.md
+@@ -0,0 +1 @@
++Aienix
+diff --git a/src/b.h b/src/b.h
+new file mode 100644
+index 0000000..8886463
+--- /dev/null
++++ b/src/b.h
+@@ -0,0 +1 @@
++#define AIENOS_DISK_NATIVE 1
+diff --git a/src/c.c b/src/c.c
+new file mode 100644
+index 0000000..687382d
+--- /dev/null
++++ b/src/c.c
+@@ -0,0 +1 @@
++AienosCapRef r = { 0 };
+diff --git a/src/d.rs b/src/d.rs
+new file mode 100644
+index 0000000..3f00101
+--- /dev/null
++++ b/src/d.rs
+@@ -0,0 +1 @@
++let l = "AIENOS-PKV-ENVID-KEY-V1";
+diff --git a/sub/CHANGELOG.md b/sub/CHANGELOG.md
+new file mode 100644
+index 0000000..9091fb3
+--- /dev/null
++++ b/sub/CHANGELOG.md
+@@ -0,0 +1 @@
++- nested changelog names Aienix
+diff --git a/sub/evidence/s.md b/sub/evidence/s.md
+new file mode 100644
+index 0000000..aa69c37
+--- /dev/null
++++ b/sub/evidence/s.md
+@@ -0,0 +1 @@
++nested evidence AIENOS
+diff --git a/sub/receipts/s.md b/sub/receipts/s.md
+new file mode 100644
+index 0000000..fed5a97
+--- /dev/null
++++ b/sub/receipts/s.md
+@@ -0,0 +1 @@
++nested receipts Aienix
+diff --git a/tools/name-check/README.md b/tools/name-check/README.md
+new file mode 100644
+index 0000000..e840003
+--- /dev/null
++++ b/tools/name-check/README.md
+@@ -0,0 +1 @@
++the tool names AIENOS

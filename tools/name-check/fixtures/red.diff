@@ -1,0 +1,122 @@
+diff --git a/README.md b/README.md
+new file mode 100644
+index 0000000..967d9f3
+--- /dev/null
++++ b/README.md
+@@ -0,0 +1 @@
++Aienix is the core tree of AIEN.
+diff --git a/a.md b/a.md
+new file mode 100644
+index 0000000..2b50292
+--- /dev/null
++++ b/a.md
+@@ -0,0 +1 @@
++It runs AIENOS.
+diff --git a/docs/after-span.md b/docs/after-span.md
+new file mode 100644
+index 0000000..9e5e6af
+--- /dev/null
++++ b/docs/after-span.md
+@@ -0,0 +1 @@
++the banner `AIENOS` then AIENOS outside
+diff --git a/docs/archive-not-dir.md b/docs/archive-not-dir.md
+new file mode 100644
+index 0000000..f35a52b
+--- /dev/null
++++ b/docs/archive-not-dir.md
+@@ -0,0 +1 @@
++AIENOS in a file whose name only starts like archive
+diff --git a/docs/compound.md b/docs/compound.md
+new file mode 100644
+index 0000000..5005fde
+--- /dev/null
++++ b/docs/compound.md
+@@ -0,0 +1 @@
++an AIENOS-based design and the AIENOS/kernel split
+diff --git a/docs/curly-open.md b/docs/curly-open.md
+new file mode 100644
+index 0000000..51ea2b4
+--- /dev/null
++++ b/docs/curly-open.md
+@@ -0,0 +1 @@
++an unmatched “ quote keeps Aienos judged
+diff --git a/docs/evidence-not-dir.md b/docs/evidence-not-dir.md
+new file mode 100644
+index 0000000..5410285
+--- /dev/null
++++ b/docs/evidence-not-dir.md
+@@ -0,0 +1 @@
++AIENOS in a file whose name only mentions evidence
+diff --git a/docs/glued.md b/docs/glued.md
+new file mode 100644
+index 0000000..0b17c33
+--- /dev/null
++++ b/docs/glued.md
+@@ -0,0 +1 @@
++PreAienixPost is still the retired word
+diff --git a/docs/hijack.md b/docs/hijack.md
+new file mode 100644
+index 0000000..137c765
+--- /dev/null
++++ b/docs/hijack.md
+@@ -0,0 +1,2 @@
++++ b/evidence/fake.md
++AIENOS after a line that looks like a file header
+diff --git a/docs/lines.md b/docs/lines.md
+new file mode 100644
+index 0000000..0d82cb6
+--- /dev/null
++++ b/docs/lines.md
+@@ -0,0 +1,3 @@
++line one is clean
++line two is clean
++line three names Aienos here
+diff --git a/docs/open-dq.md b/docs/open-dq.md
+new file mode 100644
+index 0000000..fcba5e3
+--- /dev/null
++++ b/docs/open-dq.md
+@@ -0,0 +1 @@
++an unmatched quote "AIENOS stays judged
+diff --git a/docs/p.md b/docs/p.md
+new file mode 100644
+index 0000000..50c7d8a
+--- /dev/null
++++ b/docs/p.md
+@@ -0,0 +1 @@
++AIENOS says "hello"
+diff --git a/docs/sp ace.md b/docs/sp ace.md
+new file mode 100644
+index 0000000..f5abf91
+--- /dev/null
++++ b/docs/sp ace.md	
+@@ -0,0 +1 @@
++a path with a space, then AIENOS
+diff --git a/docs/x.md b/docs/x.md
+new file mode 100644
+index 0000000..d0d747a
+--- /dev/null
++++ b/docs/x.md
+@@ -0,0 +1 @@
++Welcome to AIENIX.
+diff --git a/docs/y.md b/docs/y.md
+new file mode 100644
+index 0000000..4ccd242
+--- /dev/null
++++ b/docs/y.md
+@@ -0,0 +1 @@
++the Aienix-wide plan
+diff --git a/notes.md b/notes.md
+new file mode 100644
+index 0000000..ef076df
+--- /dev/null
++++ b/notes.md
+@@ -0,0 +1 @@
++AIENOS boots on the iMac.
+diff --git a/src/a.c b/src/a.c
+new file mode 100644
+index 0000000..41ae542
+--- /dev/null
++++ b/src/a.c
+@@ -0,0 +1 @@
++/* Aienos kernel entry */

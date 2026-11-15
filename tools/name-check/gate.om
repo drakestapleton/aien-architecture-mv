@@ -1,0 +1,469 @@
+note SPDX-License-Identifier: Apache-2.0
+note gate: the ARCH-NAME-CHECK gate runner (ADR 0038), seeded native Omega.
+note usage: gate OMC DIFF        (run from tools/name-check; writes under build/)
+note Builds ../zero-legacy/sha256.om with OMC, hashes OMC with it and compares the hash with
+note ../zero-legacy/omega.pin, builds namecheck.om, then runs build/namecheck on four fixtures
+note (red.diff exit 1, green.diff exit 0, long.diff exit 1, refuse.diff exit 2, each printing
+note exactly its .out file) and finally on DIFF, the added lines of the
+note change under review, with this process's stdout. Exit: 0 PASS; 1 a fixture differs, a build
+note fails or DIFF names a retired word; 2 DIFF unreadable; 3 OMC missing or not the pinned
+note compiler (NOT_RUN). The process helpers below are copied unchanged from ../doctrine/gate.om.
+
+text tbl "../zero-legacy/sha256.om\nbuild/sha256\nnamecheck.om\nbuild/namecheck\nbuild/omc.sha\nbuild/namecheck.sha\n../zero-legacy/omega.pin\nbuild\nfixtures/red.diff\nbuild/red.out\nfixtures/red.out\nfixtures/green.diff\nbuild/green.out\nfixtures/green.out\nfixtures/long.diff\nbuild/long.out\nfixtures/long.out\nfixtures/refuse.diff\nbuild/refuse.out\nfixtures/refuse.out\n"
+text tobs "AIEN-OBS "
+text tsha "name_check_sha256 \""
+text tq "\"\n"
+text texit "name_check_exit "
+text tfx "name_check_fixtures "
+text tnl "\n"
+text tuse "usage: gate OMC DIFF\n"
+text tnot "gate: OMC missing or not the pinned compiler (NOT_RUN)\n"
+text tcf "gate: compile failed\n"
+text tfxf "gate: a name-check fixture gave another exit or other output (FAIL)\n"
+text tkey "omc_sha256: "
+
+global omcp uchar 4096
+global omcl ulong 1
+global rootp uchar 4096
+global rootl ulong 1
+global pk uchar 4096
+global pkn ulong 1
+global pkc ulong 1
+global arg uchar 4096
+global argl ulong 1
+global fin uchar 4096
+global finl ulong 1
+global fout uchar 256
+global foutl ulong 1
+global status uchar 4
+global pin uchar 4096
+global pinl ulong 1
+global sha uchar 128
+global nb uchar 24
+global fa uchar 65536
+global fb uchar 65536
+
+note ---- text table ----
+
+fn pick i ulong to void
+s = ulong 0
+k = ulong 0
+while lt k i bound 4096
+if eq get tbl s 10
+k = add k 1
+end
+s = add s 1
+end
+n = ulong 0
+while ne get tbl add s n 10 bound 256
+put arg n get tbl add s n
+n = add n 1
+end
+put argl 0 n
+end
+
+note ---- packets for execprog ----
+
+fn pk0 to void
+put pkn 0 2
+put pkc 0 0
+end
+
+fn pka to void
+n = get pkn 0
+m = get argl 0
+put pk n uchar rem m 256
+put pk add n 1 uchar div m 256
+for i ulong m
+put pk add n add 2 i get arg i
+end
+put pkn 0 add n add 2 m
+c = add get pkc 0 1
+put pkc 0 c
+put pk 0 uchar rem c 256
+put pk 1 uchar div c 256
+end
+
+fn pkt i ulong to void
+pick i
+pka
+end
+
+fn pkomc to void
+for i ulong get omcl 0
+put arg i get omcp i
+end
+put argl 0 get omcl 0
+pka
+end
+
+fn pkroot to void
+for i ulong get rootl 0
+put arg i get rootp i
+end
+put argl 0 get rootl 0
+pka
+end
+
+fn setin i ulong to void
+pick i
+for j ulong get argl 0
+put fin j get arg j
+end
+put finl 0 get argl 0
+end
+
+fn setout i ulong to void
+pick i
+for j ulong get argl 0
+put fout j get arg j
+end
+put foutl 0 get argl 0
+end
+
+fn noio to void
+put finl 0 0
+put foutl 0 0
+end
+
+note ---- run the packet; stdin/stdout redirected when set; returns exit code or -1 ----
+
+fn child to void
+if gt get finl 0 0
+fd = fopen fin 0 get finl 0 0 0
+if lt fd 0
+exit 126
+end
+r = dupfd int fd 0 0
+end
+if gt get foutl 0 0
+fd = fopen fout 0 get foutl 0 577 420
+if lt fd 0
+exit 126
+end
+r = dupfd int fd 1 0
+end
+r = execprog pk 0 get pkn 0
+exit 127
+end
+
+fn run to long
+pid = fork
+if lt pid 0
+ret -1
+end
+if eq pid 0
+child
+end
+r = waitpid int pid status 0 4 0
+if ne r pid
+ret -1
+end
+if ne get status 0 0
+ret -1
+end
+ret long get status 1
+end
+
+note ---- steps ----
+
+fn compile src ulong dst ulong to bool
+pk0
+pkomc
+setin src
+setout dst
+r = run
+if ne r 0
+ret false
+end
+pick dst
+r = chmod arg 0 get argl 0 493
+ret eq r 0
+end
+
+note hash the file named by table entry f into table entry out; read 64 hex into sha
+fn hashto f ulong out ulong to bool
+pk0
+pkt 1
+pkt f
+put finl 0 0
+setout out
+r = run
+if ne r 0
+ret false
+end
+ret readsha out
+end
+
+fn hashomc to bool
+pk0
+pkt 1
+pkomc
+put finl 0 0
+setout 4
+r = run
+if ne r 0
+ret false
+end
+ret readsha 4
+end
+
+fn readsha out ulong to bool
+pick out
+fd = fopen arg 0 get argl 0 0 0
+if lt fd 0
+ret false
+end
+r = read int fd sha 0 128
+c = fclose int fd
+ret ge r 64
+end
+
+fn loadpin to bool
+pick 6
+fd = fopen arg 0 get argl 0 0 0
+if lt fd 0
+ret false
+end
+r = read int fd pin 0 4096
+c = fclose int fd
+if le r 0
+ret false
+end
+put pinl 0 ulong r
+ret true
+end
+
+note does sha[0..64) equal the 64 bytes after "omc_sha256: " in the pin
+fn pinok to bool
+n = get pinl 0
+m = len tkey
+if lt n add m 64
+ret false
+end
+e = sub n add m 64
+i = ulong 0
+while le i e bound 4096
+j = ulong 0
+while lt j m bound 16
+if ne get pin add i j get tkey j
+break
+end
+j = add j 1
+end
+if eq j m
+ret same add i m
+end
+i = add i 1
+end
+ret false
+end
+
+fn same p ulong to bool
+for j ulong 64
+if ne get pin add p j get sha j
+ret false
+end
+end
+ret true
+end
+
+note ---- output ----
+
+fn wnum v long to void
+if lt v 0
+put nb 22 45
+put nb 23 49
+r = write 1 nb 22 2
+ret
+end
+x = ulong v
+n = ulong 0
+if eq x 0
+put nb 23 48
+n = 1
+end
+while gt x 0 bound 20
+put nb sub 23 n uchar add 48 rem x 10
+x = div x 10
+n = add n 1
+end
+r = write 1 nb sub 24 n n
+end
+
+fn obs1 to void
+r = write 1 tobs 0 len tobs
+r = write 1 tsha 0 len tsha
+r = write 1 sha 0 64
+r = write 1 tq 0 len tq
+end
+
+fn obs2 v long to void
+r = write 1 tobs 0 len tobs
+r = write 1 texit 0 len texit
+wnum v
+r = write 1 tnl 0 1
+end
+
+note ---- name-check steps ----
+
+note read table entry f into fa (which 0) or fb (which 1); returns the byte count, or -1
+fn slurp f ulong which ulong to long
+pick f
+fd = fopen arg 0 get argl 0 0 0
+if lt fd 0
+ret -1
+end
+r = long 0
+if eq which 0
+r = read int fd fa 0 65536
+else
+r = read int fd fb 0 65536
+end
+c = fclose int fd
+ret r
+end
+
+note do files a and b (table entries) hold the same bytes (each under 65536 bytes)
+fn sameb a ulong b ulong to bool
+na = slurp a 0
+nb2 = slurp b 1
+if or lt na 0 lt nb2 0
+ret false
+end
+if ne na nb2
+ret false
+end
+if ge na 65536
+ret false
+end
+n = ulong na
+i = ulong 0
+while lt i n bound 65536
+if ne get fa i get fb i
+ret false
+end
+i = add i 1
+end
+ret true
+end
+
+note run build/namecheck with stdin table entry src and stdout table entry dst; want its exit
+fn fixture src ulong dst ulong want long to bool
+pk0
+pkt 3
+setin src
+setout dst
+r = run
+ret eq r want
+end
+
+note build/namecheck < DIFF (the path in rootp), stdout inherited
+fn rundiff to long
+pk0
+pkt 3
+j = ulong 0
+while lt j get rootl 0 bound 4096
+put fin j get rootp j
+j = add j 1
+end
+put finl 0 get rootl 0
+put foutl 0 0
+ret run
+end
+
+fn obs3 to void
+r = write 1 tobs 0 len tobs
+r = write 1 tfx 0 len tfx
+wnum 4
+r = write 1 tnl 0 1
+end
+
+fn main to int
+if lt argcnt 3
+r = write 2 tuse 0 len tuse
+ret 64
+end
+n = argread 1 omcp 0 4095
+if lt n 1
+r = write 2 tuse 0 len tuse
+ret 64
+end
+put omcl 0 ulong n
+n = argread 2 rootp 0 4095
+if lt n 1
+r = write 2 tuse 0 len tuse
+ret 64
+end
+put rootl 0 ulong n
+pick 7
+r = makedir arg 0 get argl 0 493
+if not compile 0 1
+r = write 2 tnot 0 len tnot
+ret 3
+end
+if not loadpin
+r = write 2 tnot 0 len tnot
+ret 3
+end
+if not hashomc
+r = write 2 tnot 0 len tnot
+ret 3
+end
+if not pinok
+r = write 2 tnot 0 len tnot
+ret 3
+end
+if not compile 2 3
+r = write 2 tcf 0 len tcf
+ret 1
+end
+if not hashto 3 5
+r = write 2 tcf 0 len tcf
+ret 1
+end
+obs1
+ok = fixture 8 9 1
+if not ok
+r = write 2 tfxf 0 len tfxf
+ret 1
+end
+if not sameb 9 10
+r = write 2 tfxf 0 len tfxf
+ret 1
+end
+ok2 = fixture 11 12 0
+if not ok2
+r = write 2 tfxf 0 len tfxf
+ret 1
+end
+if not sameb 12 13
+r = write 2 tfxf 0 len tfxf
+ret 1
+end
+ok3 = fixture 14 15 1
+if not ok3
+r = write 2 tfxf 0 len tfxf
+ret 1
+end
+if not sameb 15 16
+r = write 2 tfxf 0 len tfxf
+ret 1
+end
+ok4 = fixture 17 18 2
+if not ok4
+r = write 2 tfxf 0 len tfxf
+ret 1
+end
+if not sameb 18 19
+r = write 2 tfxf 0 len tfxf
+ret 1
+end
+obs3
+e = rundiff
+obs2 e
+if lt e 0
+ret 1
+end
+ret int e
+end

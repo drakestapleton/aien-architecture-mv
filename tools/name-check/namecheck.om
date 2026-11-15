@@ -1,0 +1,640 @@
+note SPDX-License-Identifier: Apache-2.0
+note namecheck: refuse new uses of the retired project names (ADR 0038), seeded native Omega.
+note usage: git -c core.quotePath=false diff --no-color --no-ext-diff -U0 BASE HEAD | namecheck
+note Reads a git unified diff on stdin. A file's path is taken from its +++ line inside the header
+note (after diff --git, before the first @@), so added text cannot name another path.
+note Every ADDED line of a judged path is checked; a line FAILs
+note when, with its quoted text removed, it names the project with a retired word:
+note   Aienix / AIENIX   retired everywhere (the whole system is AienOS); Aienix also inside a word
+note   AIENOS / Aienos   retired in prose (the kernel is Aienux, the whole system AienOS)
+note A retired word counts only when it stands as a word: no letter, digit or _ beside it, nothing
+note of - / . @ $ \ before it, not followed by \ or by . and a letter or digit (a path part or file
+note name), and not followed by - or / and an uppercase letter or digit (a label or path part). So
+note lowercase names (paths, crates, URLs), identifiers (AIENOS_DISK, AienosCapRef) and labels (AIENOS-PKV-ENVID-KEY-V1,
+note AIENOS/M5/CORTEX-V1) are code and pass, while AIENOS-based or AIENOS/kernel is prose.
+note Quoted text keeps its words: `code spans` (one left open runs to the end of the line), then
+note "double quotes", then curly quotes (U+201C .. U+201D), removed in that order.
+note Never judged (history is never rewritten): evidence/, */evidence/*, receipts/, */receipts/*,
+note docs/history/, docs/archive/, CHANGELOG*, */CHANGELOG*, docs/adr/0038-*, tools/name-check/*, and added
+note lines that start with _Avoid_: (glossary lines naming the retired words on purpose).
+note Output: one line per finding, then "name-check: FAIL" (exit 1) or "name-check: PASS" (exit 0).
+note Exit 2: stdin unreadable, an added line or hunk before any diff --git header, a +++ header
+note that is neither +++ b/PATH nor +++ /dev/null (diff.noprefix, a C-quoted name), a path longer than 4096 bytes (PATH_MAX, a Linux boundary), or one
+note diff line longer than 16777216 bytes (the largest array this compiler builds, OMEGESE 8).
+
+text wtbl "Aienix\nAIENIX\nAIENOS\nAienos\n"
+text atbl "evidence/\nreceipts/\ndocs/history/\ndocs/archive/\nCHANGELOG\ndocs/adr/0038-\ntools/name-check/\n/evidence/\n/receipts/\n/CHANGELOG\n"
+text tpre "name-check: "
+text tret ": retired name '"
+text tuse "' (use Aienux for the kernel, AienOS for the whole system)\n"
+text tfail "name-check: FAIL\n"
+text tpass1 "name-check: PASS ("
+text tpass2 " added lines checked)\n"
+text terr "name-check: input unreadable, or a path or line past its boundary (exit 2)\n"
+text tcol ":"
+text tav "+_Avoid_:"
+text thdr "+++ b/"
+text tat "@@ "
+text tdg "diff --git "
+text tnul "+++ /dev/null"
+
+global lb uchar 16777216
+global ub uchar 16777216
+global tb uchar 16777216
+global cb uchar 65536
+global pb uchar 4096
+global st ulong 9
+
+note st: 0 line length, 1 path length (0 = no judged path), 2 new-side line number,
+note 3 findings, 4 added lines checked, 5 word id of the last hit, 6 unquoted length, 7 error,
+note 8 where we are: 2 before any diff --git (an added line there is exit 2), 1 inside a file
+note header (after diff --git, before the first @@), 0 inside the hunks
+
+fn wr a ulong to void
+note write one decimal number to stdout
+d = new uchar 24 0
+n = ulong 0
+v = a
+while true bound 24
+put d sub 23 n uchar add 48 rem v 10
+n = add n 1
+v = div v 10
+if eq v 0
+break
+end
+end
+k = write 1 d sub 24 n n
+end
+
+fn isaln c ulong to bool
+if and ge c 48 le c 57
+ret true
+end
+if and ge c 65 le c 90
+ret true
+end
+if and ge c 97 le c 122
+ret true
+end
+ret false
+end
+
+fn iswc c ulong to bool
+if isaln c
+ret true
+end
+ret eq c 95
+end
+
+fn isleft c ulong to bool
+note the bytes that may not stand before a retired word: [A-Za-z0-9_] and - / . @ $ \
+if iswc c
+ret true
+end
+if eq c 92
+ret true
+end
+if or eq c 45 eq c 47
+ret true
+end
+if or eq c 46 eq c 64
+ret true
+end
+ret eq c 36
+end
+
+fn tstart k ulong to ulong
+note start of entry k of atbl
+s = ulong 0
+j = ulong 0
+while lt j k bound 4096
+if eq get atbl s 10
+j = add j 1
+end
+s = add s 1
+end
+ret s
+end
+
+fn pfxat k ulong o ulong to bool
+note entry k of atbl equals pb at offset at
+s = tstart k
+i = ulong 0
+pl = get st 1
+while ne get atbl add s i 10 bound 64
+if ge add o i pl
+ret false
+end
+if ne get pb add o i get atbl add s i
+ret false
+end
+i = add i 1
+end
+ret true
+end
+
+fn allowed to bool
+for k ulong 7
+if pfxat k 0
+ret true
+end
+end
+pl = get st 1
+o = ulong 0
+while lt o pl bound 4096
+for k2 ulong 3
+if pfxat add k2 7 o
+ret true
+end
+end
+o = add o 1
+end
+ret false
+end
+
+fn wordid i ulong to ulong
+note 1..4 when a retired word (wtbl entry) starts at ub[i], else 0
+n = get st 6
+if gt add i 6 n
+ret 0
+end
+for k ulong 4
+ok = true
+for j ulong 6
+if ne get ub add i j get wtbl add mul k 7 j
+ok = false
+end
+end
+if ok
+ret add k 1
+end
+end
+ret 0
+end
+
+fn bounded i ulong to bool
+note the word at ub[i..i+6) stands as a word
+n = get st 6
+if gt i 0
+if isleft ulong get ub sub i 1
+ret false
+end
+end
+j = add i 6
+if lt j n
+c = ulong get ub j
+if iswc c
+ret false
+end
+if eq c 92
+note a path part: \EFI\AIENOS\MODEL.MAP
+ret false
+end
+if lt add j 1 n
+d = ulong get ub add j 1
+if eq c 46
+note a file name or extension: AIENOS.md
+if isaln d
+ret false
+end
+end
+if or eq c 45 eq c 47
+note a label or path part: AIENOS-PKV-..., AIENOS/M5/... (an uppercase letter or digit follows);
+note a lowercase letter makes it prose: AIENOS-based, AIENOS-native
+if or and ge d 65 le d 90 and ge d 48 le d 57
+ret false
+end
+end
+end
+end
+ret true
+end
+
+fn lim i ulong n ulong to ulong
+note end of one inner pass: min(n, i + 999998), so an inner loop never reaches its bound and the
+note outer loop carries on; 17 outer passes x 999998 >= 16777216 bytes
+m = add i 999998
+if lt n m
+ret n
+end
+ret m
+end
+
+fn hit to bool
+note first retired word in ub[0..st6); word id in st5
+n = get st 6
+i = ulong 0
+while lt i n bound 17
+e = lim i n
+while lt i e bound 999999
+w = wordid i
+if ne w 0
+if eq w 1
+put st 5 w
+ret true
+end
+if bounded i
+put st 5 w
+ret true
+end
+end
+i = add i 1
+end
+end
+ret false
+end
+
+fn nextlb i ulong n ulong ch ulong to ulong
+note first j >= i with lb[j] = ch, else n
+j = i
+while lt j n bound 17
+e = lim j n
+while lt j e bound 999999
+if eq ulong get lb j ch
+ret j
+end
+j = add j 1
+end
+end
+ret n
+end
+
+fn nexttb i ulong n ulong ch ulong to ulong
+note first j >= i with tb[j] = ch, else n
+j = i
+while lt j n bound 17
+e = lim j n
+while lt j e bound 999999
+if eq ulong get tb j ch
+ret j
+end
+j = add j 1
+end
+end
+ret n
+end
+
+fn iscq i ulong n ulong last ulong to bool
+note U+201C (last 156) or U+201D (last 157) at ub[i]
+if gt add i 3 n
+ret false
+end
+if ne get ub i 226
+ret false
+end
+if ne get ub add i 1 128
+ret false
+end
+ret eq ulong get ub add i 2 last
+end
+
+fn nextcq i ulong n ulong to ulong
+note first j >= i where U+201D starts in ub, else n
+j = i
+while lt j n bound 17
+e = lim j n
+while lt j e bound 999999
+if iscq j n 157
+ret j
+end
+j = add j 1
+end
+end
+ret n
+end
+
+fn unbt n ulong to ulong
+note lb[1..n) -> tb with `code spans` removed; an unmatched backtick cuts the rest
+o = ulong 0
+i = ulong 1
+while lt i n bound 17
+e = lim i n
+while lt i e bound 999999
+c = get lb i
+if eq c 96
+j = nextlb add i 1 n 96
+if ge j n
+ret o
+end
+i = add j 1
+continue
+end
+put tb o c
+o = add o 1
+i = add i 1
+end
+end
+ret o
+end
+
+fn undq n ulong to ulong
+note tb[0..n) -> ub with "double quoted" spans removed; an unmatched quote stays
+o = ulong 0
+i = ulong 0
+while lt i n bound 17
+e = lim i n
+while lt i e bound 999999
+c = get tb i
+if eq c 34
+j = nexttb add i 1 n 34
+if lt j n
+i = add j 1
+continue
+end
+end
+put ub o c
+o = add o 1
+i = add i 1
+end
+end
+ret o
+end
+
+fn cpback o ulong to void
+note tb[0..o) -> ub
+k = ulong 0
+while lt k o bound 17
+e = lim k o
+while lt k e bound 999999
+put ub k get tb k
+k = add k 1
+end
+end
+end
+
+fn uncq n ulong to ulong
+note ub[0..n) -> tb with curly quoted spans removed, then copied back to ub
+o = ulong 0
+i = ulong 0
+while lt i n bound 17
+e = lim i n
+while lt i e bound 999999
+if iscq i n 156
+j = nextcq add i 3 n
+if lt j n
+i = add j 3
+continue
+end
+end
+put tb o get ub i
+o = add o 1
+i = add i 1
+end
+end
+cpback o
+ret o
+end
+
+fn isavoid n ulong to bool
+note lb = "+_Avoid_:" ...
+if lt n 9
+ret false
+end
+for i ulong 9
+if ne get lb i get tav i
+ret false
+end
+end
+ret true
+end
+
+fn startsw n ulong k ulong to bool
+note lb starts with "+++ b/" (k 6) or "+++ " (k 4) or "@@ " (k 3, compared at its own text)
+if lt n k
+ret false
+end
+if eq k 3
+for i ulong 3
+if ne get lb i get tat i
+ret false
+end
+end
+ret true
+end
+i2 = ulong 0
+while lt i2 k bound 6
+if ne get lb i2 get thdr i2
+ret false
+end
+i2 = add i2 1
+end
+ret true
+end
+
+fn hunk n ulong to void
+note @@ -a,b +c,d @@: the new-side start c
+i = nextlb 3 n 43
+v = ulong 0
+i = add i 1
+while lt i n bound 32
+c = ulong get lb i
+if or lt c 48 gt c 57
+break
+end
+v = add mul v 10 sub c 48
+i = add i 1
+end
+put st 2 v
+end
+
+fn setpath n ulong to void
+m = sub n 6
+note git ends a +++ path that holds a space with a TAB; it is not part of the name
+if gt m 0
+if eq get lb sub n 1 9
+m = sub m 1
+end
+end
+if gt m 4096
+put st 7 1
+put st 1 0
+ret
+end
+i = ulong 0
+while lt i m bound 4096
+put pb i get lb add i 6
+i = add i 1
+end
+put st 1 m
+if allowed
+put st 1 0
+end
+end
+
+fn report to void
+k = write 1 tpre 0 len tpre
+k = write 1 pb 0 get st 1
+k = write 1 tcol 0 1
+wr get st 2
+k = write 1 tret 0 len tret
+w = sub get st 5 1
+k = write 1 wtbl mul w 7 6
+k = write 1 tuse 0 len tuse
+put st 3 add get st 3 1
+end
+
+fn added n ulong to void
+if gt get st 1 0
+put st 4 add get st 4 1
+m = unbt n
+m = undq m
+put st 6 m
+m = uncq m
+put st 6 m
+if hit
+report
+end
+end
+put st 2 add get st 2 1
+end
+
+fn isdg n ulong to bool
+note lb starts with "diff --git "
+if lt n 11
+ret false
+end
+for i ulong 11
+if ne get lb i get tdg i
+ret false
+end
+end
+ret true
+end
+
+fn isnull n ulong to bool
+note lb = "+++ /dev/null"
+if ne n 13
+ret false
+end
+for i ulong 13
+if ne get lb i get tnul i
+ret false
+end
+end
+ret true
+end
+
+fn line n ulong to void
+note a +++ line names the file only inside its header, so added text cannot change the path
+if eq n 0
+ret
+end
+c = get lb 0
+if isdg n
+put st 8 1
+put st 1 0
+ret
+end
+if eq get st 8 1
+if startsw n 6
+setpath n
+ret
+end
+if startsw n 4
+note +++ /dev/null (a deleted file) names no path; any other form (no b/ prefix from
+note diff.noprefix, or a C-quoted name) cannot be judged and is refused, never skipped
+put st 1 0
+if not isnull n
+put st 7 1
+end
+ret
+end
+end
+if startsw n 3
+if eq get st 8 2
+put st 7 1
+ret
+end
+put st 8 0
+hunk n
+ret
+end
+if eq c 43
+if eq get st 8 2
+note an added line before any diff --git header: not a git diff
+put st 7 1
+ret
+end
+if isavoid n
+put st 2 add get st 2 1
+ret
+end
+added n
+ret
+end
+if eq c 32
+put st 2 add get st 2 1
+end
+end
+
+fn chunk to int
+note read one block of stdin into lines: 0 more input, 1 end of input, 2 error
+k = read 0 cb 0 65536
+if lt k long 0
+ret 2
+end
+if eq k long 0
+ret 1
+end
+kn = ulong k
+i = ulong 0
+while lt i kn bound 65536
+c = get cb i
+i = add i 1
+if eq c 10
+line get st 0
+put st 0 0
+else
+n = get st 0
+if ge n 16777216
+ret 2
+end
+put lb n c
+put st 0 add n 1
+end
+end
+if ne get st 7 0
+ret 2
+end
+ret 0
+end
+
+fn main to int
+put st 8 2
+note each level stops one pass below its bound; 999998^3 reads of up to 65536 bytes cover any input
+r = int 0
+c1 = ulong 0
+while and eq r 0 lt c1 999998 bound 999999
+c2 = ulong 0
+while and eq r 0 lt c2 999998 bound 999999
+c3 = ulong 0
+while and eq r 0 lt c3 999998 bound 999999
+r = chunk
+c3 = add c3 1
+end
+c2 = add c2 1
+end
+c1 = add c1 1
+end
+if eq r 0
+k0 = write 2 terr 0 len terr
+ret 2
+end
+if eq r 2
+k1 = write 2 terr 0 len terr
+ret 2
+end
+line get st 0
+if ne get st 7 0
+k5 = write 2 terr 0 len terr
+ret 2
+end
+if gt get st 3 0
+k6 = write 1 tfail 0 len tfail
+ret 1
+end
+k7 = write 1 tpass1 0 len tpass1
+wr get st 4
+k8 = write 1 tpass2 0 len tpass2
+ret 0
+end
