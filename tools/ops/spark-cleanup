@@ -83,7 +83,10 @@ if [ -z "${SPARK_CLEANUP_QUIET:-}" ] && [ -x "$QB" ] && [[ " $* " == *" --apply 
   # under 10 %). Class 8 only reads and its scan is long, so it always runs after
   # them, alone, holding neither the quiet lock nor run.lock, in this same process
   # tree (a service's oneshot keeps its main process alive).
-  if [ "$_p" -ge 10 ]; then SPARK_CLEANUP_SKIP8=1 "$QB" "$0" "$@"; _rc=$?
+  _cl=""; _prev=""
+  for _a in "$@"; do [ "$_prev" = "--classes" ] && _cl="$_a"; _prev="$_a"; done
+  if [ "$_cl" = 8 ]; then _rc=0   # only class 8 asked for: no deleting run, no quiet wait
+  elif [ "$_p" -ge 10 ]; then SPARK_CLEANUP_SKIP8=1 "$QB" "$0" "$@"; _rc=$?
   else SPARK_CLEANUP_SKIP8=1 "$0" "$@"; _rc=$?; fi
   SPARK_CLEANUP_ONLY8=1 "$0" "$@"
   exit $_rc
@@ -97,7 +100,7 @@ ONLY=()
 PROTECT_DEFAULT="omega-cascade omega-w4b omega-prefill omega-flashnext omega-dflash omega-symbolic sc-cascade sc-batch sc-docmem sc-dflash sc-flashnext sc-skipped sc-alpha-docs omega-alpha m1-passport"
 PROTECT="${SPARK_CLEANUP_PROTECT:-$PROTECT_DEFAULT}"
 
-usage() { sed -n '2,42p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+usage() { sed -n '2,/^set -uo pipefail/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 while [ $# -gt 0 ]; do
   case "$1" in
     --apply) APPLY=1 ;;
@@ -135,22 +138,32 @@ free_bytes() { df -B1 --output=avail / | tail -1 | tr -d ' '; }
 free_pct() { df -B1 --output=size,avail / | tail -1 | awk '{printf "%d", $2*100/$1}'; }
 human() { awk -v b="$1" 'BEGIN{ printf "%.1fG", b/1e9 }'; }
 
+C8MAX_H="${SPARK_CLEANUP_CLASS8_MAX_H:-6}"
+if ! [[ "$C8MAX_H" =~ ^[0-9]+$ ]]; then log "ALARM bad SPARK_CLEANUP_CLASS8_MAX_H='$C8MAX_H' (whole hours expected); using 6"; C8MAX_H=6; fi
 # one run at a time
 if [ "$CLASSES" = 8 ]; then exec 9>"$STATE/class8.lock"; else exec 9>"$STATE/run.lock"; fi
 if ! flock -n 9; then
   echo "spark-cleanup already running" >&2
   if [ "$CLASSES" = 8 ]; then
     # a class 8 scan still running: say so in the log, and alarm once if it has run past the threshold
-    _st=$(cat "$STATE/class8.started" 2>/dev/null); _now=$(date +%s); _max=$(( ${SPARK_CLEANUP_CLASS8_MAX_H:-6} * 3600 ))
+    _st=$(cat "$STATE/class8.started" 2>/dev/null); _now=$(date +%s); _max=$(( C8MAX_H * 3600 ))
     echo "$(date +%FT%T) class8 SKIP: a class 8 scan started $( [ -n "$_st" ] && echo "$(( (_now-_st)/60 )) min ago" || echo "at an unknown time") still holds class8.lock" >> "$LOG"
     if [ -n "$_st" ] && [ $((_now-_st)) -gt "$_max" ] && [ "$(cat "$STATE/class8-stale-posted" 2>/dev/null)" != "$_st" ]; then
-      echo "$(date +%FT%T) class8 ALARM scan running longer than ${SPARK_CLEANUP_CLASS8_MAX_H:-6} h (threshold SPARK_CLEANUP_CLASS8_MAX_H); the leftover-copy alarm is stale" >> "$LOG"
-      printf '%s ALARM spark-cleanup class8 to all: the leftover-copy scan started %s has run longer than %s h, so its alarm is stale; see %s.\n' "$(date -u +%FT%H:%MZ)" "$(date -d @"$_st" -u +%FT%H:%MZ)" "${SPARK_CLEANUP_CLASS8_MAX_H:-6}" "$LOG" >> "${SPARK_CLEANUP_BOARD:-$H/handoffs/BOARD.md}" && echo "$_st" > "$STATE/class8-stale-posted"
+      echo "$(date +%FT%T) class8 ALARM scan running longer than $C8MAX_H h (threshold SPARK_CLEANUP_CLASS8_MAX_H); the leftover-copy alarm is stale" >> "$LOG"
+      printf '%s ALARM spark-cleanup class8 to all: the leftover-copy scan started %s has run longer than %s h, so its alarm is stale; see %s.\n' "$(date -u +%FT%H:%MZ)" "$(date -d @"$_st" -u +%FT%H:%MZ)" "$C8MAX_H" "$LOG" >> "${SPARK_CLEANUP_BOARD:-$H/handoffs/BOARD.md}" && echo "$_st" > "$STATE/class8-stale-posted"
     fi
   fi
   exit 0
 fi
-[ "$CLASSES" = 8 ] && date +%s > "$STATE/class8.started"
+if [ "$CLASSES" = 8 ]; then
+  # the previous scan was killed (service timeout, crash) if it started and never wrote its finish mark
+  _st=$(cat "$STATE/class8.started" 2>/dev/null)
+  if [ -n "$_st" ] && [ "$(cat "$STATE/class8.finished" 2>/dev/null)" != "$_st" ]; then
+    log "class8 ALARM the previous leftover-copy scan (started $(date -d @"$_st" +%FT%T)) did not finish; its alarm was never written"
+    [ $APPLY = 1 ] && [ "$(cat "$STATE/class8-stale-posted" 2>/dev/null)" != "$_st" ] && printf '%s ALARM spark-cleanup class8 to all: the leftover-copy scan started %s did not finish (killed or crashed), so no alarm came from it; see %s.\n' "$(date -u +%FT%H:%MZ)" "$(date -d @"$_st" -u +%FT%H:%MZ)" "$LOG" >> "${SPARK_CLEANUP_BOARD:-$H/handoffs/BOARD.md}" && echo "$_st" > "$STATE/class8-stale-posted"
+  fi
+  date +%s > "$STATE/class8.started"
+fi
 
 if [ -n "$IF_BELOW" ]; then
   p=$(free_pct)
@@ -251,7 +264,8 @@ repo_heads() {  # $1 repo dir: HEAD, plus every local ref (branches, stash, tags
   # is its work. Exit 1 when git cannot read the repository.
   git -C "$1" rev-parse --verify -q 'HEAD^{commit}' 2>/dev/null || git -C "$1" rev-parse --git-dir >/dev/null 2>&1 || return 1
   [ -f "$1/.git" ] && return 0
-  git -C "$1" for-each-ref --format='%(objectname) %(refname)' 2>/dev/null | awk '$2 !~ /^refs\/remotes\// {print $1}'
+  local refs; refs=$(git -C "$1" for-each-ref --format='%(objectname) %(refname)' 2>/dev/null) || return 1
+  awk '$2 !~ /^refs\/remotes\// {print $1}' <<<"$refs"
   return 0
 }
 BUILD_JUNK_RE='^!! (.*/)?(target|build|node_modules|__pycache__|\.pytest_cache|\.mypy_cache|zig-cache|zig-out|\.zig-cache|\.lake|venv|\.venv)/?$|\.pyc$'
@@ -513,10 +527,13 @@ class8() {
     # a repository inside one already seen (handled or skipped) belongs to that copy
     local up="${r%/*}" inner=0
     while [ "${#up}" -gt "${#H}" ]; do [ -n "${root[$up]:-}" ] && { inner=1; break; }; up="${up%/*}"; done
-    [ $inner = 1 ] && continue
+    # a linked worktree (its .git file points into some clone's .git/worktrees/) is its own task copy,
+    # wherever it sits: agents' isolated worktrees live inside the main clones
+    if [ $inner = 1 ] && ! grep -qs '^gitdir: .*/\.git/worktrees/' "$r/.git"; then continue; fi
     root[$r]=1
-    # the main clones (~/workspace/<name> without a '-') are the shared reference copies, not task copies
-    case "$r" in "$H"/workspace/*/*) ;; "$H"/workspace/*-*) ;; "$H"/workspace/*) continue ;; esac
+    # the main clones (~/workspace/<name> without a '-', with a real .git folder) are the shared
+    # reference copies, not task copies
+    if [ -d "$r/.git" ]; then case "$r" in "$H"/workspace/*/*) ;; "$H"/workspace/*-*) ;; "$H"/workspace/*) continue ;; esac; fi
     protected_path "$r" && continue
     in_use "$r" && continue
     recent "$r" "$idle_min" && continue
@@ -531,6 +548,7 @@ class8() {
       if [ "$bad" -gt 0 ]; then kind=unstored; why="$bad local ref(s) (branch, stash or tag) not in ~/git: land the work or archive it"
       elif [ -n "$dirty" ]; then kind=dirty; why="uncommitted changes: commit and land them, or archive"
       elif [ -n "$ign" ]; then kind=dirty; why="ignored files that are not build output (${ign#!! }): save or archive them"
+      elif [ -f "$r/.git" ]; then kind=leftover; why="clean linked worktree, its HEAD in ~/git (its branches live in the main clone and are not judged here), only build output ignored: finished work left its copy, remove it"
       else kind=leftover; why="clean, every local ref in ~/git, only build output ignored: finished work left its copy, archive and remove it"; fi
     fi
     sz=$(size_of "$r"); sz=${sz:-0}
@@ -556,6 +574,7 @@ class8() {
   fi
   log "class8 total: $n copies, $(human "$bytes") ($(cut -d' ' -f1 "$TMPD/c8kinds" | sort | uniq -c | awk '{printf "%s%s %s", (NR>1?", ":""), $2, $1}')) (alarm threshold ${thr_gb}G)"
   log "class8 scan took $(( ($(date +%s) - t0) / 60 )) min"
+  [ "$CLASSES" = 8 ] && cp "$STATE/class8.started" "$STATE/class8.finished" 2>/dev/null
   # one board line when the set of copies changes, not on every run
   local sig last; sig=$(sort "$TMPD/c8kinds" | sha256sum | cut -c1-16); last=$(cat "$STATE/class8-posted" 2>/dev/null)
   if [ "$n" -gt 0 ] && [ "$bytes" -ge $((thr_gb*1000000000)) ] && [ $APPLY = 1 ] && [ ${#ONLY[@]} -eq 0 ]; then
