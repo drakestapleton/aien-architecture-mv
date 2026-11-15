@@ -1,0 +1,424 @@
+#!/usr/bin/env bash
+# spark-cleanup: reclaim regenerable disk space on the Spark, safely.
+#
+# Dry run by default. Pass --apply to delete. Every action (and every skip with
+# its reason) is logged to ~/.local/state/spark-cleanup/<date>.log.
+#
+# Classes (run in this order):
+#   1  build outputs: cargo target dirs (CACHEDIR.TAG + debug/release) under
+#      ~/workspace, ~/.claude/jobs, ~/.cache; CI judge lanes under
+#      /var/lib/aien-run/target (only while the CI lane lock is free) and
+#      renamed *.stale-* dirs there.
+#  1s  per-SHA CI dirs /var/lib/aien-run/target/<repo>/<lane>/<sha>: the newest
+#      SHA per lane stays, the per-SHA lock (else the lane lock) must be free,
+#      dirs over 5 GiB are logged REVIEW and never removed. Reported as its own
+#      class so dry-classes can hold it dry ("1s") while class 1 stays live.
+#   2  git worktrees under ~/workspace: clean, fully pushed, untouched 24 h,
+#      only ignored build junk inside -> git worktree remove + prune.
+#   3  docker dangling images and build cache.
+#   4  caches: ~/.cargo/registry/cache files unread 30 d, rustup toolchains
+#      not default and not named by any rust-toolchain file, ~/.cache entries
+#      untouched 7 d (huggingface excluded).
+#   5  /tmp entries untouched 2 d, <= 5 GiB, not named by RESUME.md/lock. dry-classes file: ~/.config/spark-cleanup/dry-classes
+#   6  journald vacuum to 2G.
+#   7  models: REPORT ONLY. Never deletes. Use the manual procedure in the
+#      handoff (write repo id + revision to ~/models/DELETED.md first).
+#
+# Hard rules applied to every candidate:
+#   - skipped if any running process has a file open in it, or uses it as
+#     cwd or exe (from /proc and lsof, collected once at start)
+#   - skipped if anything inside was modified in the last --age-hours (6 h;
+#     24 h for worktrees, 2 days for /tmp, 7 days for ~/.cache)
+#   - skipped if the path looks like evidence, receipts, handoffs,
+#     yardsticks, ~/.local/state, or another user's home
+#   - skipped if its name is in the protected list (active agent names)
+#
+# Usage:
+#   spark-cleanup                      dry run, all classes 1-6
+#   spark-cleanup --apply              delete
+#   spark-cleanup --apply --if-below 20   only run if free space < 20 %
+#   spark-cleanup --apply --only DIR [--only DIR]   end of session: only
+#                                      target dirs / worktrees at or under DIR
+#   spark-cleanup --classes 1,2        choose classes
+set -uo pipefail
+
+# Run politely: go through quiet-build so we never start (or run) during a
+# quiet-measure measurement. quiet-build waits for pending measurements, then
+# holds /tmp/aien-quiet.lock shared for the whole run.
+QB="$HOME/.local/bin/quiet-build"
+if [ -z "${SPARK_CLEANUP_QUIET:-}" ] && [ -x "$QB" ] && [[ " $* " == *" --apply "* ]]; then
+  export SPARK_CLEANUP_QUIET=1
+  # cheap pre-check so the 15-minute trigger does not queue behind
+  # measurements when there is nothing to do; under 10 % free it is an
+  # emergency and skips the quiet wait (a full disk breaks measurements too)
+  _ib=""; _prev=""
+  for _a in "$@"; do [ "$_prev" = "--if-below" ] && _ib="$_a"; _prev="$_a"; done
+  _p=$(df -B1 --output=size,avail / | tail -1 | awk '{printf "%d", $2*100/$1}')
+  if [ -n "$_ib" ] && [ "$_p" -ge "$_ib" ]; then
+    mkdir -p "$HOME/.local/state/spark-cleanup"
+    echo "$(date +%FT%T) free ${_p}% >= ${_ib}%, nothing to do" >> "$HOME/.local/state/spark-cleanup/$(date +%F).log"
+    exit 0
+  fi
+  [ "$_p" -lt 10 ] || exec "$QB" "$0" "$@"
+fi
+
+APPLY=0
+CLASSES=""
+IF_BELOW=""
+AGE_H=6
+ONLY=()
+PROTECT_DEFAULT="omega-cascade omega-w4b omega-prefill omega-flashnext omega-dflash omega-symbolic sc-cascade sc-batch sc-docmem sc-dflash sc-flashnext sc-skipped sc-alpha-docs omega-alpha m1-passport"
+PROTECT="${SPARK_CLEANUP_PROTECT:-$PROTECT_DEFAULT}"
+
+usage() { sed -n '2,42p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --apply) APPLY=1 ;;
+    --dry-run) APPLY=0 ;;
+    --classes) CLASSES="$2"; shift ;;
+    --if-below) IF_BELOW="$2"; shift ;;
+    --age-hours) AGE_H="$2"; shift ;;
+    --only) ONLY+=("$(readlink -f "$2")"); shift ;;
+    -h|--help) usage 0 ;;
+    *) echo "unknown arg: $1" >&2; usage 2 ;;
+  esac
+  shift
+done
+if [ -z "$CLASSES" ]; then
+  if [ ${#ONLY[@]} -gt 0 ]; then CLASSES="1,2"; else CLASSES="1,2,3,4,5,6"; fi
+fi
+
+H="$HOME"
+STATE="$H/.local/state/spark-cleanup"
+mkdir -p "$STATE"
+LOG="$STATE/$(date +%F).log"
+TMPD=$(mktemp -d "${TMPDIR:-/tmp}/spark-cleanup.XXXXXX")
+trap 'rm -rf "$TMPD"' EXIT
+MODE=$([ $APPLY = 1 ] && echo APPLY || echo DRY-RUN)
+
+log() { printf '%s %s\n' "$(date +%FT%T)" "$*" | tee -a "$LOG"; }
+free_bytes() { df -B1 --output=avail / | tail -1 | tr -d ' '; }
+free_pct() { df -B1 --output=size,avail / | tail -1 | awk '{printf "%d", $2*100/$1}'; }
+human() { awk -v b="$1" 'BEGIN{ printf "%.1fG", b/1e9 }'; }
+
+# one run at a time
+exec 9>"$STATE/run.lock"
+if ! flock -n 9; then echo "spark-cleanup already running" >&2; exit 0; fi
+
+if [ -n "$IF_BELOW" ]; then
+  p=$(free_pct)
+  if [ "$p" -ge "$IF_BELOW" ]; then
+    echo "$(date +%FT%T) free ${p}% >= ${IF_BELOW}%, nothing to do" >> "$LOG"
+    exit 0
+  fi
+  log "free ${p}% < ${IF_BELOW}%: low-space trigger"
+fi
+SUDO="sudo -n"
+$SUDO true 2>/dev/null || SUDO=""
+
+START_FREE=$(free_bytes)
+TOTAL=0
+log "=== spark-cleanup $MODE classes=$CLASSES only=${ONLY[*]:-all} free=$(human "$START_FREE") ($(free_pct)%)"
+
+# ---- in-use set: cwd, exe, root, open fds and mmaps of every process ----
+INUSE="$TMPD/inuse"
+collect_inuse() {
+  {
+    for p in /proc/[0-9]*; do
+      $SUDO readlink "$p/cwd" "$p/exe" "$p/root" 2>/dev/null
+      $SUDO find "$p/fd" -mindepth 1 -maxdepth 1 -exec readlink {} + 2>/dev/null
+      $SUDO awk '$6 ~ /^\// {print $6}' "$p/maps" 2>/dev/null
+    done
+    $SUDO lsof -nP -Fn 2>/dev/null | sed -n 's/^n//p'
+  } | sed 's/ (deleted)$//' | grep '^/' | grep -vx / | sort -u > "$INUSE"
+}
+collect_inuse
+in_use() {  # $1 = dir; true if any in-use path is the dir or below it
+  grep -qxF -- "$1" "$INUSE" && return 0
+  grep -qF -- "$1/" "$INUSE"
+}
+recent() {  # $1 dir, $2 minutes: true if anything inside changed recently
+  [ -n "$($SUDO find "$1" -xdev -mmin "-$2" -print -quit 2>/dev/null)" ]
+}
+size_of() { $SUDO du -sxb -- "$1" 2>/dev/null | cut -f1; }
+protected_path() {
+  case "$1" in
+    "$H"/handoffs/hive/factory-bays/*)
+      # Allow verified Cargo build caches under factory-bays; protect everything else in handoffs
+      is_cargo_target "$1" || return 0
+      case "$1" in */evidence|*/evidence/*|*/receipts*|*/keys*|*/bundles*|*.jsonl) return 0 ;; esac
+      ;;
+    */evidence|*/evidence/*|*/receipts*|*/handoffs*|*/yardsticks*|"$H"/.local/state*) return 0 ;;
+    /home/drake|/home/drake/*|/home/atlas|/home/atlas/*|/home/aienalpha|/home/aienalpha/*) return 0 ;;
+    /var/lib/aienos-region*|*/keys*|*/bundles*|*.jsonl) return 0 ;;
+  esac
+  case "$1" in "$H"/*|/var/lib/aien-run/*|/tmp/*) ;; *) return 0 ;; esac
+  local b n
+  for n in $PROTECT; do
+    for b in "/$n" "/$n/"; do case "$1/" in *"$b"*) return 0 ;; esac; done
+  done
+  return 1
+}
+under_only() {
+  [ ${#ONLY[@]} -eq 0 ] && return 0
+  local o; for o in "${ONLY[@]}"; do case "$1/" in "$o"/*) return 0 ;; esac; done
+  return 1
+}
+want() { case ",$CLASSES," in *",$1,"*) return 0 ;; esac; return 1; }
+
+# classes listed in ~/.config/spark-cleanup/dry-classes (comma list, e.g. "5") or
+# SPARK_CLEANUP_DRY_CLASSES only log WOULD-REMOVE, even under --apply
+DRY_CLASSES="${SPARK_CLEANUP_DRY_CLASSES:-$(cat "$H/.config/spark-cleanup/dry-classes" 2>/dev/null)}"
+REFUSED=0 DRYTOTAL=0
+remove_dir() {  # $1 class, $2 path, $3 reason-safe ; optional $4 lockfile
+  local c="$1" d="$2" why="$3" lf="${4:-}" sz
+  # paranoia: never remove a shallow or root-ish path; a top-level /tmp entry
+  # (depth 2) is the one shallow path class 5 exists to remove
+  local depth; depth=$(awk -F/ '{print NF-1}' <<<"$d")
+  case "$d" in /tmp/?*) [ "$depth" -eq 2 ] && depth=3 ;; esac
+  if [ "$depth" -lt 3 ] || [ "$d" = "$H" ]; then REFUSED=$((REFUSED+1)); return; fi
+  sz=$(size_of "$d"); sz=${sz:-0}
+  if [ $APPLY = 1 ] && case ",${DRY_CLASSES// /}," in *",$c,"*) false ;; *) true ;; esac; then
+    if [ -n "$lf" ]; then
+      flock -n "$lf" $SUDO rm -rf --one-file-system -- "$d" || { log "class$c SKIP lock-taken $d"; return; }
+    else
+      rm -rf --one-file-system -- "$d" 2>/dev/null || $SUDO rm -rf --one-file-system -- "$d"
+    fi
+    log "class$c REMOVED $(human "$sz") $d ($why)"
+  elif [ $APPLY = 1 ]; then
+    log "class$c WOULD-REMOVE $(human "$sz") $d ($why) [dry-class]"
+    DRYTOTAL=$((DRYTOTAL + sz)); return
+  else
+    log "class$c WOULD-REMOVE $(human "$sz") $d ($why)"
+  fi
+  TOTAL=$((TOTAL + sz))
+}
+
+# ---------------- class 1: build outputs ----------------
+is_cargo_target() {
+  [ -f "$1/CACHEDIR.TAG" ] && grep -q 8a477f597d28d172789f06886806bc55 "$1/CACHEDIR.TAG" 2>/dev/null &&
+    { [ -d "$1/debug" ] || [ -d "$1/release" ] || [ -f "$1/.rustc_info.json" ]; }
+}
+class1() {
+  local list="$TMPD/c1" d prev="" lf min_age
+  {
+    find "$H/workspace" -maxdepth 5 -name CACHEDIR.TAG -printf '%h\n' 2>/dev/null
+    find "$H/work" -maxdepth 6 -name CACHEDIR.TAG -printf '%h\n' 2>/dev/null
+    find /tmp/sweep -maxdepth 5 -name CACHEDIR.TAG -printf '%h\n' 2>/dev/null
+    find "$H/handoffs/hive/factory-bays" -maxdepth 6 -name CACHEDIR.TAG -printf '%h\n' 2>/dev/null
+    find "$H/.claude/jobs" -maxdepth 7 -name CACHEDIR.TAG -printf '%h\n' 2>/dev/null
+    find "$H/.cache" -maxdepth 3 -name CACHEDIR.TAG -printf '%h\n' 2>/dev/null
+  } | sort -u > "$list"
+  while read -r d; do
+    # skip nested tags inside a target we already listed
+    if [ -n "$prev" ] && case "$d/" in "$prev"/*) true ;; *) false ;; esac; then continue; fi
+    prev="$d"
+    [ -L "$d" ] && continue
+    is_cargo_target "$d" || continue
+    [ -n "$(find "$d" -name .git -print -quit 2>/dev/null)" ] && { log "class1 SKIP has-git $d"; continue; }
+    under_only "$d" || continue
+    if protected_path "$d"; then log "class1 SKIP protected $d"; continue; fi
+    if in_use "$d" || in_use "$(dirname "$d")"; then log "class1 SKIP in-use $d"; continue; fi
+    min_age=$((AGE_H*60))
+    case "$d" in "$H"/work/*|/tmp/sweep/*|"$H"/handoffs/hive/factory-bays/*) [ "$min_age" -lt 1440 ] && min_age=1440 ;; esac
+    if recent "$d" "$min_age"; then log "class1 SKIP modified<$((min_age/60))h $d"; continue; fi
+    remove_dir 1 "$d" "cargo target, idle $((min_age/60))h, nothing open"
+  done < "$list"
+
+  # CI judge lanes: /var/lib/aien-run/target/<repo>/<lane>; only with the lane lock free
+  [ ${#ONLY[@]} -gt 0 ] && return
+  [ -n "$SUDO" ] || { log "class1 SKIP aien-run (no sudo)"; return; }
+  local LK="$H/.local/state/aien-local-ci/locks/target"
+  for d in $($SUDO find /var/lib/aien-run/target -mindepth 3 -maxdepth 3 -type d -name '*.stale-*' 2>/dev/null); do
+    if in_use "$d"; then log "class1 SKIP in-use $d"; continue; fi
+    if recent "$d" $((AGE_H*60)); then log "class1 SKIP modified<${AGE_H}h $d"; continue; fi
+    remove_dir 1 "$d" "renamed stale CI build dir, cargo no longer uses it"
+  done
+  # per-SHA CI dirs (class "1s"): <repo>/<lane>/<40-hex sha>, each with its own
+  # lock file; older SHAs that have none fall back to the lane lock
+  local lane s sl newest ssz smax="${SPARK_CLEANUP_CI_SHA_MAX:-5368709120}"
+  for lane in $($SUDO find /var/lib/aien-run/target -mindepth 2 -maxdepth 2 -type d 2>/dev/null); do
+    newest=$($SUDO find "$lane" -mindepth 1 -maxdepth 1 -type d -regextype posix-extended -regex '.*/[0-9a-f]{40}' -printf '%T@ %p\n' 2>/dev/null | sort -n | tail -1 | cut -d' ' -f2-)
+    [ -n "$newest" ] || continue
+    log "class1s KEEP newest-in-lane $newest"
+    for s in $($SUDO find "$lane" -mindepth 1 -maxdepth 1 -type d -regextype posix-extended -regex '.*/[0-9a-f]{40}' 2>/dev/null); do
+      [ "$s" = "$newest" ] && continue
+      sl="$LK/$(tr / _ <<<"$s").lock"
+      [ -e "$sl" ] || sl="$LK/$(tr / _ <<<"$lane").lock"
+      [ -e "$sl" ] || { log "class1s SKIP no-lock $s"; continue; }
+      if ! flock -n "$sl" true; then log "class1s SKIP lock-busy $s"; continue; fi
+      if in_use "$s"; then log "class1s SKIP in-use $s"; continue; fi
+      if recent "$s" $((AGE_H*60)); then log "class1s SKIP modified<${AGE_H}h $s"; continue; fi
+      ssz=$(size_of "$s"); ssz=${ssz:-0}
+      if [ "$ssz" -gt "$smax" ]; then log "class1s REVIEW $(human "$ssz") $s (over $(human "$smax") cap: manual review, not removed)"; continue; fi
+      remove_dir 1s "$s" "per-SHA CI build output, not newest in lane, lock free, idle ${AGE_H}h" "$sl"
+    done
+  done
+  for d in $($SUDO find /var/lib/aien-run/target -mindepth 2 -maxdepth 2 -type d 2>/dev/null); do
+    lf="$LK/$(tr / _ <<<"$d").lock"
+    [ -e "$lf" ] || { log "class1 SKIP no-lane-lock $d"; continue; }
+    if ! flock -n "$lf" true; then log "class1 SKIP lane-busy $d"; continue; fi
+    if in_use "$d"; then log "class1 SKIP in-use $d"; continue; fi
+    if recent "$d" $((AGE_H*60)); then log "class1 SKIP modified<${AGE_H}h $d"; continue; fi
+    local k
+    for k in $($SUDO find "$d" -mindepth 1 -maxdepth 1 -type d \( -name debug -o -name release -o -name 'mutants*' -o -name '*-mutants' -o -name 'debug.*' -o -name 'release.*' \) 2>/dev/null); do
+      remove_dir 1 "$k" "CI lane build output, lane lock free, idle ${AGE_H}h" "$lf"
+    done
+  done
+}
+
+# ---------------- class 2: worktrees ----------------
+class2() {
+  local repo wt line
+  for repo in $(find "$H/workspace" -maxdepth 2 -name .git -type d -printf '%h\n' 2>/dev/null); do
+    git -C "$repo" worktree list --porcelain 2>/dev/null | awk -v main="$repo" '
+      /^worktree /{p=substr($0,10); lk=0}
+      /^locked/{lk=1}
+      /^$/{ if (p!=main) print lk"\t"p; p="" }
+      END{ if (p!="" && p!=main) print lk"\t"p }' > "$TMPD/wt"
+    while IFS=$'\t' read -r lk wt; do
+      [ -d "$wt" ] || continue
+      case "$wt" in "$H"/workspace/*|"$H"/.claude/jobs/*) ;; *) continue ;; esac
+      under_only "$wt" || continue
+      [ "$lk" = 1 ] && { log "class2 SKIP locked $wt"; continue; }
+      if protected_path "$wt"; then log "class2 SKIP protected $wt"; continue; fi
+      if in_use "$wt"; then log "class2 SKIP in-use $wt"; continue; fi
+      if recent "$wt" 1440; then log "class2 SKIP modified<24h $wt"; continue; fi
+      if [ -n "$(git -C "$wt" status --porcelain 2>/dev/null)" ]; then log "class2 SKIP dirty $wt"; continue; fi
+      local bad
+      bad=$(git -C "$wt" status --porcelain --ignored 2>/dev/null | grep '^!! ' |
+            grep -vE '^!! (.*/)?(target|build|node_modules|__pycache__|\.pytest_cache|\.mypy_cache|zig-cache|zig-out|\.zig-cache)/?$|\.pyc$' | head -1)
+      if [ -n "$bad" ]; then log "class2 SKIP ignored-nonbuild ($bad) $wt"; continue; fi
+      local up unpushed
+      if up=$(git -C "$wt" rev-parse --abbrev-ref '@{u}' 2>/dev/null); then
+        unpushed=$(git -C "$wt" rev-list "@{u}..HEAD" 2>/dev/null | head -1)
+      else
+        unpushed=$([ -z "$(git -C "$wt" branch -r --contains HEAD 2>/dev/null | head -1)" ] && echo none-on-remote)
+      fi
+      if [ -n "$unpushed" ]; then log "class2 SKIP unpushed $wt"; continue; fi
+      local sz; sz=$(size_of "$wt"); sz=${sz:-0}
+      if [ $APPLY = 1 ]; then
+        if git -C "$repo" worktree remove "$wt" 2>>"$LOG"; then
+          log "class2 REMOVED $(human "$sz") $wt (clean, pushed, idle 24h)"; TOTAL=$((TOTAL+sz))
+        else
+          log "class2 FAILED git worktree remove $wt"
+        fi
+      else
+        log "class2 WOULD-REMOVE $(human "$sz") $wt (clean, pushed, idle 24h)"; TOTAL=$((TOTAL+sz))
+      fi
+    done < "$TMPD/wt"
+    [ $APPLY = 1 ] && git -C "$repo" worktree prune 2>/dev/null
+  done
+}
+
+# ---------------- class 3: docker ----------------
+class3() {
+  [ -n "$SUDO" ] || { log "class3 SKIP no sudo"; return; }
+  command -v docker >/dev/null || return
+  if [ $APPLY = 1 ]; then
+    local b a; b=$(free_bytes)
+    $SUDO docker image prune -f >>"$LOG" 2>&1
+    $SUDO docker builder prune -f >>"$LOG" 2>&1
+    a=$(free_bytes); log "class3 REMOVED docker dangling images + build cache, df delta $(human $((a-b)))"
+    TOTAL=$((TOTAL + a - b))
+  else
+    log "class3 WOULD-RUN docker image prune -f; docker builder prune -f"
+    $SUDO docker system df 2>/dev/null | tee -a "$LOG"
+  fi
+}
+
+# ---------------- class 4: caches and toolchains ----------------
+class4() {
+  local d f sz n
+  # cargo registry tarballs not read in 30 days (cargo re-downloads on demand)
+  if [ -d "$H/.cargo/registry/cache" ]; then
+    sz=$(find "$H/.cargo/registry/cache" -type f -name '*.crate' -atime +30 -printf '%s\n' | awk '{s+=$1}END{print s+0}')
+    if [ $APPLY = 1 ]; then find "$H/.cargo/registry/cache" -type f -name '*.crate' -atime +30 -delete; fi
+    log "class4 $([ $APPLY = 1 ] && echo REMOVED || echo WOULD-REMOVE) $(human "$sz") ~/.cargo/registry/cache crates unread 30d"
+    TOTAL=$((TOTAL+sz))
+  fi
+  # rustup toolchains: keep default, stable, nightly, anything referenced or in use
+  if command -v rustup >/dev/null; then
+    local refs def
+    def=$(rustup default 2>/dev/null | awk '{print $1}')
+    refs=$(find "$H/workspace" -maxdepth 3 \( -name rust-toolchain -o -name rust-toolchain.toml \) -not -path '*/target/*' 2>/dev/null |
+           xargs -r grep -hoE '[0-9]+\.[0-9]+(\.[0-9]+)?|nightly[-0-9]*' 2>/dev/null | sort -u)
+    for d in "$H"/.rustup/toolchains/*; do
+      n=$(basename "$d"); local v=${n%%-aarch64*}; v=${v%%-x86_64*}
+      case "$v" in stable|nightly|beta) continue ;; esac
+      [ "$n" = "$def" ] && continue
+      grep -qxF "$v" <<<"$refs" && continue
+      if in_use "$d"; then log "class4 SKIP in-use $d"; continue; fi
+      if [ $APPLY = 1 ]; then
+        sz=$(size_of "$d"); rustup toolchain uninstall "$n" >>"$LOG" 2>&1 && { log "class4 REMOVED $(human "$sz") toolchain $n (no rust-toolchain file names it)"; TOTAL=$((TOTAL+sz)); }
+      else
+        sz=$(size_of "$d"); log "class4 WOULD-REMOVE $(human "$sz") toolchain $n (no rust-toolchain file names it)"; TOTAL=$((TOTAL+sz))
+      fi
+    done
+  fi
+  # ~/.cache entries untouched for 7 days (huggingface holds models: class 7)
+  for d in "$H"/.cache/*; do
+    [ -e "$d" ] || continue
+    case "$(basename "$d")" in huggingface|pip|uv) continue ;; esac
+    if in_use "$d"; then log "class4 SKIP in-use $d"; continue; fi
+    if recent "$d" $((7*1440)); then continue; fi
+    remove_dir 4 "$d" "cache, untouched 7d"
+  done
+}
+
+# ---------------- class 5: /tmp ----------------
+class5() {
+  local d sz max="${SPARK_CLEANUP_TMP_MAX:-5368709120}" named="$TMPD/c5named"
+  # /tmp paths a worker's RESUME.md or a lock file names stay, however old
+  { find "$H/handoffs" -maxdepth 3 -name 'RESUME*.md' -type f -print0 2>/dev/null
+    find /tmp -maxdepth 1 -name '*.lock' -type f -size -64k -print0 2>/dev/null
+  } | xargs -0r grep -ohaE '/tmp/[A-Za-z0-9._+-]+' 2>/dev/null | sed 's#[.]*$##' | sort -u > "$named"
+  for d in /tmp/* /tmp/.[!.]*; do
+    [ -e "$d" ] || continue
+    # lock/slot/admit files (q36-extra uses .lock1/.lock2/.admit) and every aien-q36 marker stay:
+    # deleting a flock file while a holder has it open breaks mutual exclusion
+    case "$(basename "$d")" in systemd-private-*|.X11-unix|.ICE-unix|.XIM-unix|.font-unix|.Test-unix|tmux-*|ssh-*|snap-private-tmp|aien-quiet*|aien-gb10.lock|aien-q36*|cxo|*.lock|*.lock[0-9]*|*.admit|*.pid) continue ;; esac
+    [ -S "$d" ] && continue
+    if in_use "$d"; then continue; fi
+    if recent "$d" $((2*1440)); then continue; fi
+    if protected_path "$d"; then log "class5 SKIP protected $d"; continue; fi
+    if grep -qxF -- "$d" "$named"; then log "class5 SKIP named-by-resume-or-lock $d"; continue; fi
+    sz=$(size_of "$d"); sz=${sz:-0}
+    if [ "$sz" -gt "$max" ]; then log "class5 SKIP over-cap $(human "$sz") $d (needs review)"; continue; fi
+    remove_dir 5 "$d" "/tmp entry untouched 2d, nothing open"
+  done
+}
+
+# ---------------- class 6: journald ----------------
+class6() {
+  [ -n "$SUDO" ] || return
+  if [ $APPLY = 1 ]; then
+    local b a; b=$(free_bytes)
+    $SUDO journalctl --vacuum-size=2G >>"$LOG" 2>&1
+    a=$(free_bytes); log "class6 REMOVED journal vacuum to 2G, df delta $(human $((a-b)))"; TOTAL=$((TOTAL+a-b))
+  else
+    log "class6 WOULD-RUN journalctl --vacuum-size=2G ($($SUDO journalctl --disk-usage 2>/dev/null | grep -oE '[0-9.]+[KMGT]'))"
+  fi
+}
+
+# ---------------- class 7: models (report only) ----------------
+class7() {
+  local d keep="qwen3.8-27b-fp8-017b9c7a qwen3.8-27b-fp8-017b9c7a.layouts qwen3-30b-a3b-instruct-2507-fp8 qwen3.8-27b-dflash2-50307d4c"
+  for d in "$H"/models/*/; do
+    d=${d%/}; local n; n=$(basename "$d")
+    grep -qw -- "$n" <<<"$keep" && continue
+    log "class7 REPORT $(human "$(size_of "$d")") $d $(in_use "$d" && echo IN-USE) (manual only; record repo+revision in ~/models/DELETED.md first)"
+  done
+}
+
+for c in 1 2 3 4 5 6 7; do
+  want $c || continue
+  b=$(free_bytes)
+  "class$c"
+  [ $APPLY = 1 ] && log "class$c done: df free $(human "$b") -> $(human "$(free_bytes)")"
+done
+
+[ "$REFUSED" -gt 0 ] && log "REFUSED $REFUSED shallow paths (depth < 3); none removed"
+[ "$DRYTOTAL" -gt 0 ] && log "dry-classes ${DRY_CLASSES}: would-free $(human "$DRYTOTAL"), nothing removed for them"
+END_FREE=$(free_bytes)
+log "=== done $MODE: $( [ $APPLY = 1 ] && echo freed || echo would-free ) $(human "$TOTAL") (measured); df free $(human "$START_FREE") -> $(human "$END_FREE") ($(free_pct)%)"
