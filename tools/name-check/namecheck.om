@@ -5,11 +5,13 @@ note Reads a git unified diff on stdin. A file's path is taken from its +++ line
 note (after diff --git, before the first @@), so added text cannot name another path.
 note Every ADDED line of a judged path is checked; a line FAILs
 note when, with its quoted text removed, it names the project with a retired word:
-note   Aienix / AIENIX   retired everywhere (the whole system is AienOS); Aienix also inside a word
+note   Aienix / AIENIX   retired everywhere outside quoted text, also inside a word or identifier
 note   AIENOS / Aienos   retired in prose (the kernel is Aienux, the whole system AienOS)
 note A retired word counts only when it stands as a word: no letter, digit or _ beside it, nothing
-note of - / . @ $ \ before it, not followed by \ or by . and a letter or digit (a path part or file
-note name), and not followed by - or / and an uppercase letter or digit (a label or path part). So
+note of - / . @ $ \ before it (a hyphen after a lowercase letter is prose: non-AIENOS), not followed
+note by \ or by . and a letter or digit (a path part or file name), and not followed by - or / and a
+note token of uppercase letters or digits that holds a digit or runs on to the next - / or _ (a label
+note or path part). So
 note lowercase names (paths, crates, URLs), identifiers (AIENOS_DISK, AienosCapRef) and labels (AIENOS-PKV-ENVID-KEY-V1,
 note AIENOS/M5/CORTEX-V1) are code and pass, while AIENOS-based or AIENOS/kernel is prose.
 note Quoted text keeps its words: `code spans` (one left open runs to the end of the line), then
@@ -17,7 +19,8 @@ note "double quotes", then curly quotes (U+201C .. U+201D), removed in that orde
 note Never judged (history is never rewritten): evidence/, */evidence/*, receipts/, */receipts/*,
 note docs/history/, docs/archive/, CHANGELOG*, */CHANGELOG*, docs/adr/0038-*, tools/name-check/*, and added
 note lines that start with _Avoid_: (glossary lines naming the retired words on purpose).
-note Output: one line per finding, then "name-check: FAIL" (exit 1) or "name-check: PASS" (exit 0).
+note Output: one line per finding, then "name-check: FAIL" (exit 1) or "name-check: PASS" (exit 0);
+note a refusal prints one line that names its reason (exit 2).
 note Exit 2: stdin unreadable, an added line or hunk before any diff --git header, a +++ header
 note that is neither +++ b/PATH nor +++ /dev/null (diff.noprefix, a C-quoted name), a path longer than 4096 bytes (PATH_MAX, a Linux boundary), or one
 note diff line longer than 16777216 bytes (the largest array this compiler builds, OMEGESE 8).
@@ -30,7 +33,13 @@ text tuse "' (use Aienux for the kernel, AienOS for the whole system)\n"
 text tfail "name-check: FAIL\n"
 text tpass1 "name-check: PASS ("
 text tpass2 " added lines checked)\n"
-text terr "name-check: input unreadable, or a path or line past its boundary (exit 2)\n"
+text trf "name-check: refused, nothing judged (exit 2): "
+text tr1 "a +++ header is neither +++ b/PATH nor +++ /dev/null (diff.noprefix, or a file name git C-quotes)\n"
+text tr2 "an added line or a hunk comes before any diff --git header: the input is not a git diff\n"
+text tr3 "a path is longer than 4096 bytes (PATH_MAX)\n"
+text tr4 "a line is longer than 16777216 bytes (the largest array the compiler builds)\n"
+text tr5 "standard input could not be read\n"
+text tr6 "the input is longer than 999998^3 reads of 65536 bytes\n"
 text tcol ":"
 text tav "+_Avoid_:"
 text thdr "+++ b/"
@@ -46,7 +55,8 @@ global pb uchar 4096
 global st ulong 9
 
 note st: 0 line length, 1 path length (0 = no judged path), 2 new-side line number,
-note 3 findings, 4 added lines checked, 5 word id of the last hit, 6 unquoted length, 7 error,
+note 3 findings, 4 added lines checked, 5 word id of the last hit, 6 unquoted length, 7 refusal
+note reason (0 none; 1..6 as the tr texts),
 note 8 where we are: 2 before any diff --git (an added line there is exit 2), 1 inside a file
 note header (after diff --git, before the first @@), 0 inside the hunks
 
@@ -172,12 +182,65 @@ end
 ret 0
 end
 
+fn prefix i ulong p ulong to bool
+note a hyphen with a lowercase letter before it joins prose: non-AIENOS
+if ne p 45
+ret false
+end
+if lt i 2
+ret false
+end
+q = ulong get ub sub i 2
+ret and ge q 97 le q 122
+end
+
+fn isupd c ulong to bool
+if and ge c 65 le c 90
+ret true
+end
+ret and ge c 48 le c 57
+end
+
+fn islabel k ulong n ulong to bool
+note ub[k..) is a token of [A-Z0-9] that holds a digit, or runs on to - / or _ (a token is read up
+note to 4095 bytes; past that it is prose)
+m = k
+dg = false
+while and lt m n lt sub m k 4095 bound 4096
+c0 = ulong get ub m
+if not isupd c0
+break
+end
+if le c0 57
+dg = true
+end
+m = add m 1
+end
+if eq m k
+ret false
+end
+if dg
+ret true
+end
+if ge m n
+ret false
+end
+c = ulong get ub m
+if or eq c 45 eq c 47
+ret true
+end
+ret eq c 95
+end
+
 fn bounded i ulong to bool
 note the word at ub[i..i+6) stands as a word
 n = get st 6
 if gt i 0
-if isleft ulong get ub sub i 1
+p = ulong get ub sub i 1
+if isleft p
+if not prefix i p
 ret false
+end
 end
 end
 j = add i 6
@@ -199,9 +262,10 @@ ret false
 end
 end
 if or eq c 45 eq c 47
-note a label or path part: AIENOS-PKV-..., AIENOS/M5/... (an uppercase letter or digit follows);
-note a lowercase letter makes it prose: AIENOS-based, AIENOS-native
-if or and ge d 65 le d 90 and ge d 48 le d 57
+note a label or path part: AIENOS-PKV-ENVID-..., AIENOS/M5/CORTEX-V1, AIENOS-PI5: a token of
+note uppercase letters or digits that holds a digit or runs on to the next - / or _; anything else
+note is prose (AIENOS-based, AIENOS-Omega, AIENOS/Aienux)
+if islabel add j 1 n
 ret false
 end
 end
@@ -229,7 +293,8 @@ e = lim i n
 while lt i e bound 999999
 w = wordid i
 if ne w 0
-if eq w 1
+if le w 2
+note Aienix and AIENIX are retired even inside a word or identifier
 put st 5 w
 ret true
 end
@@ -366,14 +431,19 @@ fn uncq n ulong to ulong
 note ub[0..n) -> tb with curly quoted spans removed, then copied back to ub
 o = ulong 0
 i = ulong 0
+nc = false
 while lt i n bound 17
 e = lim i n
 while lt i e bound 999999
+if not nc
 if iscq i n 156
 j = nextcq add i 3 n
 if lt j n
 i = add j 3
 continue
+end
+note no closing quote after i, so none after any later opening quote: the scan stays linear
+nc = true
 end
 end
 put tb o get ub i
@@ -446,7 +516,7 @@ m = sub m 1
 end
 end
 if gt m 4096
-put st 7 1
+put st 7 3
 put st 1 0
 ret
 end
@@ -542,7 +612,7 @@ end
 end
 if startsw n 3
 if eq get st 8 2
-put st 7 1
+put st 7 2
 ret
 end
 put st 8 0
@@ -552,7 +622,7 @@ end
 if eq c 43
 if eq get st 8 2
 note an added line before any diff --git header: not a git diff
-put st 7 1
+put st 7 2
 ret
 end
 if isavoid n
@@ -567,10 +637,35 @@ put st 2 add get st 2 1
 end
 end
 
+fn refuse to void
+note the one line that says why nothing was judged
+k = write 1 trf 0 len trf
+w = get st 7
+if eq w 1
+k1 = write 1 tr1 0 len tr1
+end
+if eq w 2
+k2 = write 1 tr2 0 len tr2
+end
+if eq w 3
+k3 = write 1 tr3 0 len tr3
+end
+if eq w 4
+k4 = write 1 tr4 0 len tr4
+end
+if eq w 5
+k5 = write 1 tr5 0 len tr5
+end
+if eq w 6
+k6 = write 1 tr6 0 len tr6
+end
+end
+
 fn chunk to int
 note read one block of stdin into lines: 0 more input, 1 end of input, 2 error
 k = read 0 cb 0 65536
 if lt k long 0
+put st 7 5
 ret 2
 end
 if eq k long 0
@@ -587,6 +682,7 @@ put st 0 0
 else
 n = get st 0
 if ge n 16777216
+put st 7 4
 ret 2
 end
 put lb n c
@@ -617,16 +713,13 @@ end
 c1 = add c1 1
 end
 if eq r 0
-k0 = write 2 terr 0 len terr
-ret 2
+put st 7 6
 end
-if eq r 2
-k1 = write 2 terr 0 len terr
-ret 2
-end
+if eq get st 7 0
 line get st 0
+end
 if ne get st 7 0
-k5 = write 2 terr 0 len terr
+refuse
 ret 2
 end
 if gt get st 3 0

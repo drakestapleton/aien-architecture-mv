@@ -7,6 +7,8 @@
 set -eu
 root="${1:?usage: gate.sh ROOT [BASE]}"
 base="${2:-}"
+# ROOT is resolved against the caller's directory before this script changes directory
+root=$(cd "$root" && pwd) || { echo "gate.sh: ROOT $1 is not a directory" >&2; exit 2; }
 cd "$(dirname "$0")"
 not_run() { echo "gate.sh: AIEN_OMC is unavailable or not independently pinned (NOT_RUN)" >&2; exit 3; }
 [ -n "${AIEN_OMC:-}" ] && [ -x "$AIEN_OMC" ] || not_run

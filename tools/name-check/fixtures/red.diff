@@ -33,6 +33,20 @@ index 0000000..5005fde
 +++ b/docs/compound.md
 @@ -0,0 +1 @@
 +an AIENOS-based design and the AIENOS/kernel split
+diff --git a/docs/compound2.md b/docs/compound2.md
+new file mode 100644
+index 0000000..e437cc4
+--- /dev/null
++++ b/docs/compound2.md
+@@ -0,0 +1 @@
++non-AIENOS work, the AIENOS-Omega bridge, the AIENOS/Aienux split
+diff --git a/docs/curly-many.md b/docs/curly-many.md
+new file mode 100644
+index 0000000..e593ba0
+--- /dev/null
++++ b/docs/curly-many.md
+@@ -0,0 +1 @@
++“ “ “ “ unmatched openings, then AIENOS
 diff --git a/docs/curly-open.md b/docs/curly-open.md
 new file mode 100644
 index 0000000..51ea2b4
@@ -62,6 +76,13 @@ index 0000000..137c765
 @@ -0,0 +1,2 @@
 +++ b/evidence/fake.md
 +AIENOS after a line that looks like a file header
+diff --git a/docs/ident.md b/docs/ident.md
+new file mode 100644
+index 0000000..1fdeb37
+--- /dev/null
++++ b/docs/ident.md
+@@ -0,0 +1 @@
++set AIENIX_MODE before boot
 diff --git a/docs/lines.md b/docs/lines.md
 new file mode 100644
 index 0000000..0d82cb6

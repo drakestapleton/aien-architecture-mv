@@ -1,0 +1,1 @@
+name-check: refused, nothing judged (exit 2): a +++ header is neither +++ b/PATH nor +++ /dev/null (diff.noprefix, or a file name git C-quotes)

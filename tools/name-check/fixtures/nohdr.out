@@ -1,0 +1,1 @@
+name-check: refused, nothing judged (exit 2): an added line or a hunk comes before any diff --git header: the input is not a git diff

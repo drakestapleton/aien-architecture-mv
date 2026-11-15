@@ -5,27 +5,32 @@ Refuses new uses of the retired project names ([ADR 0038](../../docs/adr/0038-na
 
 `namecheck.om` reads a git diff on standard input and judges every added line:
 
-- `Aienix` / `AIENIX` are refused everywhere (also inside a longer word).
-- `AIENOS` / `Aienos` are refused when they stand as a word in prose, including prose compounds
-  such as `AIENOS-based` or `AIENOS/kernel` (a lowercase letter after `-` or `/`).
+- `Aienix` / `AIENIX` are refused everywhere outside quoted text, also inside a longer word or an
+  identifier (`AIENIX_MODE`): another company uses the name.
+- `AIENOS` / `Aienos` are refused when they stand as a word in prose, including prose compounds:
+  `AIENOS-based`, `AIENOS-Omega`, `AIENOS/Aienux`, `AIENOS-2 release`, `non-AIENOS`.
 - Code passes: lowercase names (paths, crates, URLs, the aienos.com address), identifiers that only
-  contain the word (`AIENOS_DISK`, `AienosCapRef`), labels and path parts where an uppercase letter
-  or digit follows `-` or `/` (`AIENOS-PKV-ENVID-KEY-V1`, the key-derivation label
-  `AIENOS/M5/CORTEX-V1`), and file names (`AIENOS.md`). These change with their own tests, never
-  with prose; renaming a key-derivation label would change the derived keys.
+  contain the word (`AIENOS_DISK`, `AienosCapRef`), labels and path parts where `-` or `/` is
+  followed by a token of uppercase letters or digits that runs on to the next `-`, `/` or `_`
+  (`AIENOS-PKV-ENVID-KEY-V1`, the key-derivation label `AIENOS/M5/CORTEX-V1`), path parts joined by
+  a backslash (`\EFI\AIENOS\MODEL.MAP`) and file names (`AIENOS.md`). These change with their own
+  tests, never with prose; renaming a key-derivation label would change the derived keys. A path
+  part after `/` (`Atlas/AIENOS`) also passes: it cannot be told from a directory name.
 - Quoted text keeps its words: code spans, double quotes and curly quotes (older documents and
   program output are quoted as they were written).
 - History is never judged: `evidence/`, `receipts/` (at any depth), `docs/history/`,
   `docs/archive/`, `CHANGELOG*` (at any depth), this tool and ADR 0038 itself, and glossary lines
   starting `_Avoid_:`.
-- Other ADRs are judged on purpose. An accepted ADR is history and is not edited; a new ADR or an
-  amendment is new text and uses the current names, so an added line in an old ADR is new text too.
+- Other ADRs, dated audits and reports are judged on purpose. They are history and are not edited
+  (the 2026-11-15 rename left them as written); a new ADR, audit or amendment is new text and uses
+  the current names, so an added line in an old one is new text too.
 - A file's path comes only from its `+++` line inside the diff header (after `diff --git`, before
   the first `@@`), so added text that looks like a header cannot move the following lines into an
   allowed path. The TAB git adds after a path that holds a space is dropped.
 
 It prints one line per finding and `name-check: FAIL` (exit 1), or `name-check: PASS (N added
-lines checked)` (exit 0). Exit 2 is a clean refusal with nothing judged: the input is not a git
+lines checked)` (exit 0; an empty diff, where nothing changed, passes with 0 lines). Exit 2 is a
+clean refusal with nothing judged, and one line on standard output names the reason: the input is not a git
 diff (an added line or hunk before any `diff --git` header); a `+++` header is neither
 `+++ b/PATH` nor `+++ /dev/null` (a diff made with `diff.noprefix`, or a file name git C-quotes
 because it holds a `"`, `\` or control byte); the input cannot be read; a path is longer than 4096
@@ -45,16 +50,21 @@ the change under review to `build/change.diff` (`git diff -U0 --no-textconv --sr
 --dst-prefix=b/` from the merge base of BASE, default `origin/main`, else `HEAD~1`, to `HEAD`; the
 fixed prefixes override any `diff.noprefix` or `diff.mnemonicPrefix` setting), and runs `gate.om`.
 `gate.om` hashes the compiler again with the native `sha256.om`, builds `namecheck.om`, and requires
-four fixtures to give exactly their recorded result before it judges the change:
+six fixtures to give exactly their recorded exit and output, counting those that pass
+(`name_check_fixtures`), before it judges the change:
 
 | Fixture | Exit | Output | What it holds |
 |---|---|---|---|
-| `fixtures/red.diff` | 1 | `red.out` (17 findings) | every retired form, compounds, a word outside a quotation, unmatched quotes, line numbers inside a hunk, a fake header line, a path with a space |
-| `fixtures/green.diff` | 0 | `green.out` | the new names, identifiers, labels, file names, every history path (also nested), the glossary line, each kind of quotation |
+| `fixtures/red.diff` | 1 | `red.out` (20 findings) | every retired form, an `AIENIX_` identifier, compounds, a word outside a quotation, unmatched quotes, line numbers inside a hunk, a fake header line, a path with a space |
+| `fixtures/green.diff` | 0 | `green.out` | the new names, identifiers, labels, backslash path parts, file names, every history path (also nested), the glossary line, each kind of quotation |
 | `fixtures/long.diff` | 1 | `long.out` | one added line of 1000017 bytes with the retired word at its end (longer than one inner loop) |
-| `fixtures/refuse.diff` | 2 | `refuse.out` (empty) | a file name git C-quotes |
+| `fixtures/refuse.diff` | 2 | `refuse.out` | a file name git C-quotes |
+| `fixtures/nohdr.diff` | 2 | `nohdr.out` | an added line before any `diff --git` header |
+| `fixtures/pathmax.diff` | 2 | `pathmax.out` | a `+++` path of 4097 bytes |
 
-The fixtures are real `git diff` output, made with the same options as `gate.sh`.
+The first four are real `git diff` output made with the same options as `gate.sh`; `nohdr` and
+`pathmax` are written by hand, because git cannot produce them. The line-length refusal (a line over
+16777216 bytes) has no fixture, so as not to commit 16 MB; it was checked by hand (exit 2).
 
 To check another repository's change with the same tool, build it and pipe that repository's diff in
 with the same options:

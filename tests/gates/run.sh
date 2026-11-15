@@ -94,7 +94,7 @@ case "$step" in
     # ADR 0038: tools/name-check/namecheck.om (seeded .om) judges the added lines of the change
     # (merge base of origin/main, else HEAD~1, to HEAD) for the retired project names; gate.sh
     # checks AIEN_OMC against tools/zero-legacy/omega.pin and only writes the git diff; gate.om
-    # repeats the hash check, requires its four fixtures to give their recorded output,
+    # repeats the hash check, requires its six fixtures to give their recorded output,
     # then judges the change. NOT_RUN (exit 3) without the pinned compiler.
     exec sh tools/name-check/gate.sh "$ROOT"
     ;;

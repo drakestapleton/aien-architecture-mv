@@ -2,14 +2,14 @@ note SPDX-License-Identifier: Apache-2.0
 note gate: the ARCH-NAME-CHECK gate runner (ADR 0038), seeded native Omega.
 note usage: gate OMC DIFF        (run from tools/name-check; writes under build/)
 note Builds ../zero-legacy/sha256.om with OMC, hashes OMC with it and compares the hash with
-note ../zero-legacy/omega.pin, builds namecheck.om, then runs build/namecheck on four fixtures
-note (red.diff exit 1, green.diff exit 0, long.diff exit 1, refuse.diff exit 2, each printing
-note exactly its .out file) and finally on DIFF, the added lines of the
+note ../zero-legacy/omega.pin, builds namecheck.om, then runs build/namecheck on six fixtures
+note (red 1, green 0, long 1, refuse 2, nohdr 2, pathmax 2: the exit, and stdout exactly the .out
+note file), counts those that pass, and finally runs it on DIFF, the added lines of the
 note change under review, with this process's stdout. Exit: 0 PASS; 1 a fixture differs, a build
 note fails or DIFF names a retired word; 2 DIFF unreadable; 3 OMC missing or not the pinned
 note compiler (NOT_RUN). The process helpers below are copied unchanged from ../doctrine/gate.om.
 
-text tbl "../zero-legacy/sha256.om\nbuild/sha256\nnamecheck.om\nbuild/namecheck\nbuild/omc.sha\nbuild/namecheck.sha\n../zero-legacy/omega.pin\nbuild\nfixtures/red.diff\nbuild/red.out\nfixtures/red.out\nfixtures/green.diff\nbuild/green.out\nfixtures/green.out\nfixtures/long.diff\nbuild/long.out\nfixtures/long.out\nfixtures/refuse.diff\nbuild/refuse.out\nfixtures/refuse.out\n"
+text tbl "../zero-legacy/sha256.om\nbuild/sha256\nnamecheck.om\nbuild/namecheck\nbuild/omc.sha\nbuild/namecheck.sha\n../zero-legacy/omega.pin\nbuild\nfixtures/red.diff\nbuild/red.out\nfixtures/red.out\nfixtures/green.diff\nbuild/green.out\nfixtures/green.out\nfixtures/long.diff\nbuild/long.out\nfixtures/long.out\nfixtures/refuse.diff\nbuild/refuse.out\nfixtures/refuse.out\nfixtures/nohdr.diff\nbuild/nohdr.out\nfixtures/nohdr.out\nfixtures/pathmax.diff\nbuild/pathmax.out\nfixtures/pathmax.out\n"
 text tobs "AIEN-OBS "
 text tsha "name_check_sha256 \""
 text tq "\"\n"
@@ -42,6 +42,7 @@ global sha uchar 128
 global nb uchar 24
 global fa uchar 65536
 global fb uchar 65536
+global fxn ulong 1
 
 note ---- text table ----
 
@@ -372,10 +373,23 @@ put foutl 0 0
 ret run
 end
 
+note fixture t: table entries t (input), t+1 (build output), t+2 (recorded output); want its exit
+fn fxcase t ulong want long to bool
+ok = fixture t add t 1 want
+if not ok
+ret false
+end
+if not sameb add t 1 add t 2
+ret false
+end
+put fxn 0 add get fxn 0 1
+ret true
+end
+
 fn obs3 to void
 r = write 1 tobs 0 len tobs
 r = write 1 tfx 0 len tfx
-wnum 4
+wnum long get fxn 0
 r = write 1 tnl 0 1
 end
 
@@ -423,39 +437,14 @@ r = write 2 tcf 0 len tcf
 ret 1
 end
 obs1
-ok = fixture 8 9 1
-if not ok
-r = write 2 tfxf 0 len tfxf
-ret 1
-end
-if not sameb 9 10
-r = write 2 tfxf 0 len tfxf
-ret 1
-end
-ok2 = fixture 11 12 0
-if not ok2
-r = write 2 tfxf 0 len tfxf
-ret 1
-end
-if not sameb 12 13
-r = write 2 tfxf 0 len tfxf
-ret 1
-end
-ok3 = fixture 14 15 1
-if not ok3
-r = write 2 tfxf 0 len tfxf
-ret 1
-end
-if not sameb 15 16
-r = write 2 tfxf 0 len tfxf
-ret 1
-end
-ok4 = fixture 17 18 2
-if not ok4
-r = write 2 tfxf 0 len tfxf
-ret 1
-end
-if not sameb 18 19
+ok1 = fxcase 8 1
+ok2 = fxcase 11 0
+ok3 = fxcase 14 1
+ok4 = fxcase 17 2
+ok5 = fxcase 20 2
+ok6 = fxcase 23 2
+if ne get fxn 0 6
+obs3
 r = write 2 tfxf 0 len tfxf
 ret 1
 end

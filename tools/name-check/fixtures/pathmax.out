@@ -1,0 +1,1 @@
+name-check: refused, nothing judged (exit 2): a path is longer than 4096 bytes (PATH_MAX)

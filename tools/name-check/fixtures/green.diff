@@ -33,6 +33,13 @@ index 0000000..3c5b1eb
 +++ b/docs/archive/old.md
 @@ -0,0 +1 @@
 +archived AIENOS text
+diff --git a/docs/bs.md b/docs/bs.md
+new file mode 100644
+index 0000000..40f32a8
+--- /dev/null
++++ b/docs/bs.md
+@@ -0,0 +1 @@
++the folder AIENOS\MODEL.MAP and the root \AIENOS here
 diff --git a/docs/c.md b/docs/c.md
 new file mode 100644
 index 0000000..8a341d3
@@ -61,13 +68,20 @@ index 0000000..f6c8aaa
 +++ b/docs/labels.md
 @@ -0,0 +1 @@
 +AIENOS/M5/CORTEX-V1 and AIENOS-PKV-ENVID-KEY-V1 stay
+diff --git a/docs/lanes.md b/docs/lanes.md
+new file mode 100644
+index 0000000..37c779a
+--- /dev/null
++++ b/docs/lanes.md
+@@ -0,0 +1 @@
++lane AIENOS-PI5 step 3 and the AIENOS-2 label stay
 diff --git a/docs/marks.md b/docs/marks.md
 new file mode 100644
-index 0000000..7ab42f6
+index 0000000..57d19ba
 --- /dev/null
 +++ b/docs/marks.md
 @@ -0,0 +1 @@
-+@AIENOS $AIENOS /AIENOS .AIENOS -AIENOS AIENOS_X AIENOS-X1 AIENOS-9 AIENOS.y AIENOS/Z
++@AIENOS $AIENOS /AIENOS .AIENOS -AIENOS AIENOS_X AIENOS-X1-A AIENOS-9_B AIENOS.y AIENOS/Z/x
 diff --git a/docs/o.md b/docs/o.md
 new file mode 100644
 index 0000000..c48b592
