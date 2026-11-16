@@ -1,0 +1,19 @@
+#!/bin/sh
+# store-post-update: the post-update hook of every repository in the git store ~/git (nested folders
+# included). git runs it after every push to the store, and on the Spark every landing is such a push.
+# Installed once as ~/.local/lib/store-hooks/post-update; ~/.gitconfig points every repository under ~/git
+# at that folder (README, "Store hook"), so a repository created later gets it with no step of its own.
+# Never fails the push and never makes it wait:
+#   1. bazinga-git sync: refresh the public read-only copy of this repository (as the old per-repository hook did)
+#   2. spark-cleanup --landed NAME, detached: remove or archive the leftover working copies of this repository
+#   3. then disk-alarm --quiet: a board ALARM and a Linear comment if free space is short or falling fast
+n=$(basename "$(pwd)" .git)
+B=${STORE_HOOK_BIN:-$HOME/.local/bin}
+S=${STORE_HOOK_SYNC:-$HOME/.local/lib/bazinga-git/sync.sh}
+mkdir -p "$HOME/.local/state/bazinga-git" 2>/dev/null
+[ -x "$S" ] && "$S" "$n" >> "$HOME/.local/state/bazinga-git/sync.log" 2>&1
+# git sets GIT_DIR and friends for this hook; the steps below work on other repositories, so none may leak
+for v in $(env | sed -n 's/^\(GIT_[A-Za-z0-9_]*\)=.*/\1/p'); do unset "$v"; done
+( cd / && setsid nohup sh -c '"$1/spark-cleanup" --landed "$2"; "$1/disk-alarm" --quiet' store-post-update "$B" "$n" \
+    < /dev/null > /dev/null 2>&1 & ) 2>/dev/null
+exit 0

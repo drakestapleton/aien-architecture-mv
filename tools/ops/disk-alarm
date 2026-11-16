@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+# disk-alarm: one loud ALARM line on ~/handoffs/BOARD.md, and a comment on the standing Linear issue, when the
+# root filesystem is short of space or filling fast. Never deletes anything. Change-driven, not clock-driven:
+# every landing on a ~/git store repository runs it (the store hook tools/ops/store-post-update, detached, after
+# spark-cleanup --landed), aien-bays finish runs it each time a bay finishes, and any lander or gate runner may
+# run it at start (`disk-alarm --quiet`).
+#
+# Linear: the first ALARM, each further 25 GB fall, and the "cleared" line are also posted as a comment on
+# DISK_ALARM_LINEAR_ISSUE (default DRA-521, "Free space on the Spark disk"), by a detached
+# `aien-pick run` (an agent with the Linear tools; its output goes to $STATE/linear.log). Repeats held back
+# on the board are not posted. DISK_ALARM_LINEAR_CMD replaces `aien-pick run` (tests); set it to `true` to
+# turn the Linear route off.
+#
+# What it measures (the whole filesystem, never a list of directories):
+#   free  = df free bytes of the filesystem holding DISK_ALARM_FS (default /)
+#   rate  = fall of free between this check and the newest earlier check at least DISK_ALARM_WINDOW_S
+#           old (default 600 s; checks older than 3 h are dropped), in GB/h (GB = 10^9 bytes)
+#   consumers = which processes wrote the most since that earlier check, from every process's
+#           /proc/<pid>/io write_bytes (reaped children are counted in their parent), summed per real
+#           working directory (readlink of /proc/<pid>/cwd: symlinks resolved, any name), plus bytes held by
+#           deleted-but-open files. A writer is named wherever it runs; no path list can hide it.
+# Alarm when free < DISK_ALARM_MIN_GB (default 300, the free-space target set for this disk on DRA-702, so the
+# alarm comes well before the disk is full) or rate > DISK_ALARM_MAX_RATE_GBH (default 20).
+# A repeat ALARM waits DISK_ALARM_REPEAT_S (default 1800 s) unless free fell another 25 GB; one
+# "cleared" line is written when the condition ends.
+# Cost when quiet: one df and one grep over /proc/*/io (well under a second).
+#
+# Test hooks: DISK_ALARM_DF (command that prints free bytes), DISK_ALARM_NOW (epoch), DISK_ALARM_PROC
+# (a fake /proc tree with <pid>/io, <pid>/comm, <pid>/cwd), DISK_ALARM_BOARD, DISK_ALARM_STATE.
+# Usage: disk-alarm [--quiet]   exit 0 quiet, 3 alarm (written or held back), 2 cannot measure.
+set -u
+H=$HOME
+FS=${DISK_ALARM_FS:-/}
+MIN_GB=${DISK_ALARM_MIN_GB:-300}
+MAX_RATE=${DISK_ALARM_MAX_RATE_GBH:-20}
+WINDOW=${DISK_ALARM_WINDOW_S:-600}
+REPEAT=${DISK_ALARM_REPEAT_S:-1800}
+BOARD=${DISK_ALARM_BOARD:-$H/handoffs/BOARD.md}
+STATE=${DISK_ALARM_STATE:-$H/.local/state/disk-alarm}
+PROC=${DISK_ALARM_PROC:-/proc}
+LINEAR_ISSUE=${DISK_ALARM_LINEAR_ISSUE:-DRA-521}
+LINEAR_CMD=${DISK_ALARM_LINEAR_CMD:-aien-pick run}
+QUIET=0; [ "${1:-}" = --quiet ] && QUIET=1
+mkdir -p "$STATE/io" || exit 2
+exec 9>"$STATE/run.lock"
+flock -n 9 || exit 0   # another check is running at this moment; its result stands
+
+now=${DISK_ALARM_NOW:-$(date +%s)}
+if [ -n "${DISK_ALARM_DF:-}" ]; then free=$(eval "$DISK_ALARM_DF"); else free=$(df -B1 --output=avail "$FS" | tail -n 1 | tr -d ' '); fi
+[[ "$free" =~ ^[0-9]+$ ]] || { echo "disk-alarm: cannot read free space (${free:-nothing})" >&2; exit 2; }
+
+# sample: free bytes, and every process's cumulative write_bytes (pid<TAB>bytes)
+S="$STATE/samples.tsv"; touch "$S"
+printf '%s\t%s\n' "$now" "$free" >> "$S"
+grep -sH '^write_bytes' "$PROC"/[0-9]*/io | sed -E "s#^$PROC/([0-9]+)/io:write_bytes:[[:space:]]*#\1\t#" > "$STATE/io/$now.tsv"
+# keep 3 hours of samples and their io snapshots
+awk -F'\t' -v c=$((now - 10800)) '$1 >= c' "$S" > "$S.tmp" && mv "$S.tmp" "$S"
+for f in "$STATE"/io/*.tsv; do t=${f##*/}; t=${t%.tsv}; [ "$t" -lt $((now - 10800)) ] && rm -f "$f"; done
+
+# rate against the newest earlier sample at least WINDOW old
+read -r t0 f0 < <(awk -F'\t' -v c=$((now - WINDOW)) '$1 <= c {t=$1; f=$2} END{if (t) print t, f}' "$S")
+rate=''
+[ -n "${t0:-}" ] && [ "$now" -gt "$t0" ] && rate=$(awk -v a="$f0" -v b="$free" -v dt=$((now - t0)) 'BEGIN{printf "%.1f", (a-b)/1e9*3600/dt}')
+gb=$(awk -v b="$free" 'BEGIN{printf "%.1f", b/1e9}')
+
+why=''
+awk -v g="$gb" -v m="$MIN_GB" 'BEGIN{exit !(g < m)}' && why="free ${gb} GB < ${MIN_GB} GB"
+if [ -n "$rate" ] && awk -v r="$rate" -v m="$MAX_RATE" 'BEGIN{exit !(r > m)}'; then
+  why="${why:+$why; }falling ${rate} GB/h > ${MAX_RATE} GB/h"
+fi
+
+board_line() { ( flock -w 30 8 || exit 1; printf '%s\n' "$1" >> "$BOARD" ) 8>>"$BOARD.lock"; }
+stamp() { date -u -d "@$1" +%FT%TZ; }
+# Linear: detached, its own log, never blocks or fails the check
+L="$STATE/last-linear"
+linear_post() {
+  local task="Post exactly the following text, unchanged, as one new comment on Linear issue ${LINEAR_ISSUE}, then reply with the comment's URL. Do nothing else. Text: $1"
+  ( cd "$STATE" && setsid nohup $LINEAR_CMD "$task" >> "$STATE/linear.log" 2>&1 < /dev/null & ) 2>/dev/null
+  return 0
+}
+
+A="$STATE/last-alarm"
+if [ -z "$why" ]; then
+  if [ -f "$A" ]; then
+    line="- $(stamp "$now") disk-alarm: cleared, / free ${gb} GB, falling ${rate:-unmeasured} GB/h (thresholds ${MIN_GB} GB, ${MAX_RATE} GB/h)"
+    board_line "$line"
+    [ -f "$L" ] && { linear_post "${line#- }"; rm -f "$L"; }
+    rm -f "$A"
+  fi
+  [ "$QUIET" = 1 ] || echo "disk-alarm: quiet, free ${gb} GB, falling ${rate:-unmeasured} GB/h"
+  exit 0
+fi
+if [ -f "$A" ]; then
+  read -r lt lf < "$A"
+  if [ $((now - lt)) -lt "$REPEAT" ] && [ $((lf - free)) -lt 25000000000 ]; then
+    [ "$QUIET" = 1 ] || echo "disk-alarm: alarm held (posted $((now - lt)) s ago): $why"
+    exit 3
+  fi
+fi
+
+# consumers: write_bytes since the baseline snapshot, summed per real cwd
+base="$STATE/io/${t0:-x}.tsv"
+if [ ! -f "$base" ]; then  # no snapshot at t0: the newest one older than this check
+  bt=$(for f in "$STATE"/io/*.tsv; do t=${f##*/}; echo "${t%.tsv}"; done | awk -v n="$now" '$1 ~ /^[0-9]+$/ && $1 < n' | sort -n | tail -n 1)
+  base="$STATE/io/$bt.tsv"
+fi
+top=''
+if [ -n "$base" ] && [ -f "$base" ]; then
+  since=${base##*/}; since=${since%.tsv}
+  top=$(awk -F'\t' 'NR==FNR {a[$1]=$2; next} ($1 in a) && $2 > a[$1] {print $1 "\t" $2 - a[$1]}' "$base" "$STATE/io/$now.tsv" |
+    sort -t$'\t' -k2,2nr | head -n 200 |
+    while IFS=$'\t' read -r pid d; do
+      cwd=$(readlink -f "$PROC/$pid/cwd" 2>/dev/null) || cwd='(exited)'
+      printf '%s\t%s\t%s\n' "$cwd" "$d" "$(cat "$PROC/$pid/comm" 2>/dev/null)"
+    done |
+    awk -F'\t' '{s[$1]+=$2; if (!($1 in c) || $2 > m[$1]) {c[$1]=$3; m[$1]=$2}} END {for (k in s) printf "%d\t%s\t%s\n", s[k], k, c[k]}' |
+    sort -t$'\t' -k1,1nr | head -n 3 |
+    awk -F'\t' -v h="$H" '{p=$2; if (index(p, h "/") == 1) p="~" substr(p, length(h)+1); printf "%s%s +%.1f GB written (%s)", (NR>1 ? "; " : ""), p, $1/1e9, $3}')
+  top="${top:-no process wrote} (since $(stamp "$since"))"
+fi
+# bytes held by deleted-but-open files (space df counts as used that no directory shows)
+held=$(find "$PROC"/[0-9]*/fd -maxdepth 1 -type l -lname '*(deleted)' -printf '%p\n' 2>/dev/null |
+  while read -r f; do stat -Lc %s "$f" 2>/dev/null; done | awk '{s+=$1} END{printf "%.1f", s/1e9}')
+
+line="$(stamp "$now") ALARM disk: / free ${gb} GB, falling ${rate:-unmeasured} GB/h ($why). Top writers by real directory: ${top:-no baseline yet}. Deleted-but-open: ${held:-0} GB. Nothing deleted; see ~/.local/bin/disk-alarm; regenerable bay output: bay-clean; reviewed reclaim: spark-cleanup (dry run first)."
+board_line "- ${line/ALARM disk:/**ALARM disk**}"
+printf '%s %s\n' "$now" "$free" > "$A"
+# Linear: the first alarm of an episode, then each further 25 GB fall
+lf=''; [ -f "$L" ] && read -r _ lf < "$L"
+if [ -z "$lf" ] || [ $((lf - free)) -ge 25000000000 ]; then
+  linear_post "$line"
+  printf '%s %s\n' "$now" "$free" > "$L"
+fi
+[ "$QUIET" = 1 ] || echo "disk-alarm: ALARM written to $BOARD: $why"
+exit 3
