@@ -11,22 +11,28 @@
 #      renamed *.stale-* dirs there.
 #  1s  per-SHA CI dirs /var/lib/aien-run/target/<repo>/<lane>/<sha>: the newest
 #      SHA per lane stays, the per-SHA lock (else the lane lock) must be free,
-#      dirs over 5 GiB are logged REVIEW and never removed. Reported as its own
+#      size is logged, never a reason to keep or remove. Reported as its own
 #      class so dry-classes can hold it dry ("1s") while class 1 stays live.
+#   Any entry removed (or kept unsaved by class 5) above SPARK_CLEANUP_BIG_ALARM
+#   bytes (default 5 GiB) is named in one ALARM line at the end of the run.
 #   2  git worktrees under ~/workspace: untouched 24 h, HEAD present in ~/git
 #      (reachable from a ref of a bare repository there; a push to some other
 #      remote does not count), and no unsaved bytes. A plain `git status` is
 #      not that check: untracked and ignored files hidden by
 #      status.showUntrackedFiles, and skip-worktree or assume-unchanged edits,
-#      keep the worktree. A nested repository keeps it too, including a bare
-#      repository whose folder is named *.git (for example .lake/dep.git) and
-#      not only a path named .git.
+#      keep the worktree. A nested repository keeps it too: a checkout (a path
+#      named .git) or a bare repository of any name, found by its shape
+#      (HEAD, objects/ and refs/), for example .lake/packages/dep.
 #      -> git worktree remove + prune.
 #   3  docker dangling images and build cache.
 #   4  caches: ~/.cargo/registry/cache files unread 30 d, rustup toolchains
 #      not default and not named by any rust-toolchain file, ~/.cache entries
 #      untouched 7 d (huggingface excluded).
-#   5  /tmp entries untouched 2 d, <= 5 GiB, not named by RESUME.md/lock. dry-classes file: ~/.config/spark-cleanup/dry-classes
+#   5  /tmp entries untouched 2 d, not named by RESUME.md/lock. An entry holding a
+#      git repository (itself, nested or bare) goes only when every repository in
+#      it is saved in ~/git as class 8 means it (refs, submodule commits, no
+#      unsaved files); else "class5 SKIP unsaved". Size never decides.
+#      dry-classes file: ~/.config/spark-cleanup/dry-classes
 #   6  journald vacuum to 2G.
 #   7  models: REPORT ONLY. Never deletes. Use the manual procedure in the
 #      handoff (write repo id + revision to ~/models/DELETED.md first).
@@ -39,8 +45,9 @@
 #                   nothing ignored but build output: a finished task left its copy
 #        unstored   a ref, nested repository or submodule commit not in ~/git
 #        dirty      uncommitted, untracked, skip-worktree or assume-unchanged
-#                   changes, or ignored files that are not build output.
-#                   status.showUntrackedFiles is forced on for this check
+#                   changes (bytes or the executable bit), ignored files that
+#                   are not build output, or any of these inside a nested
+#                   repository. status.showUntrackedFiles is forced on
 #        unreadable git cannot read it (broken worktree, other owner): never "leftover"
 #      plus model weight files over 1 GiB with one link (.safetensors .gguf
 #      .pt .pth): copies, not links. ~/git is searched with nested folders;
@@ -51,6 +58,27 @@
 #      posts one line to the team board (SPARK_CLEANUP_BOARD, default
 #      ~/handoffs/BOARD.md), and only when the set of copies changed since
 #      its last post (~/.local/state/spark-cleanup/class8-posted).
+#
+# Landing mode (spark-cleanup --landed REPO, REPO = a store name such as omega-mv):
+#   run detached by a line in ~/git/<REPO>.git/hooks/post-update after every
+#   landing. It looks at the class 8 copies (~/workspace, ~/work, ~/.claude/jobs;
+#   never /tmp or ~/handoffs) whose remote URL names REPO or whose HEAD has a root
+#   commit of the store's REPO.git. Main clones, protected or claimed copies (a
+#   CLAIM line on the board naming the path in the last SPARK_CLEANUP_CLAIM_DAYS
+#   days, default 14, or a locked worktree), and copies with anything open stay.
+#     saved (class 8 leftover: every ref, nested and submodule commit in ~/git,
+#     nothing unsaved) and no file outside .git written for
+#     SPARK_CLEANUP_LANDED_IDLE_H hours (default 6): removed (git worktree
+#     remove + prune for a linked worktree, rm for a clone); single-link bytes
+#     freed are logged
+#     unsaved, idle SPARK_CLEANUP_LANDED_ARCHIVE_D days (default 3): archived to
+#     SPARK_CLEANUP_ARCHIVE (default ~/archive/agent-work)/<name>.tar.zst, the
+#     entry count checked, then removed and replaced by <copy>/ARCHIVED.txt with
+#     the restore command. A linked worktree's archive also holds its record in
+#     the main clone and a bundle of a HEAD not in ~/git
+#     anything else stays, with the reason in the log.
+#   All output goes to the log; the exit status is always 0. It waits for a
+#   running spark-cleanup instead of skipping, and runs under quiet-build.
 #
 # Hard rules applied to every candidate:
 #   - skipped if any running process has a file open in it, or uses it as
@@ -71,6 +99,7 @@
 # Usage:
 #   spark-cleanup                      dry run, classes 1-6 and 8
 #   spark-cleanup --apply              delete
+#   spark-cleanup --landed REPO        after a landing of REPO (see above)
 #   spark-cleanup --apply --if-below 20   only run if free space < 20 %
 #   spark-cleanup --apply --only DIR [--only DIR]   end of session: only
 #                                      target dirs / worktrees at or under DIR
@@ -81,6 +110,13 @@ set -uo pipefail
 # quiet-measure measurement. quiet-build waits for pending measurements, then
 # holds /tmp/aien-quiet.lock shared for the whole run.
 QB="$HOME/.local/bin/quiet-build"
+# a landing hook: under quiet-build (no wait under 10 % free), status 0 whatever happens
+if [ -z "${SPARK_CLEANUP_QUIET:-}" ] && [ -x "$QB" ] && [[ " $* " == *" --landed "* ]]; then
+  export SPARK_CLEANUP_QUIET=1
+  _p=${SPARK_CLEANUP_TEST_FREE_PCT:-$(df -B1 --output=size,avail / | tail -1 | awk '{printf "%d", $2*100/$1}')}
+  if [ "$_p" -ge 10 ]; then "$QB" "$0" "$@"; else "$0" "$@"; fi
+  exit 0
+fi
 if [ -z "${SPARK_CLEANUP_QUIET:-}" ] && [ -x "$QB" ] && [[ " $* " == *" --apply "* ]]; then
   export SPARK_CLEANUP_QUIET=1
   # cheap pre-check so the 15-minute trigger does not queue behind
@@ -112,6 +148,7 @@ CLASSES=""
 IF_BELOW=""
 AGE_H=6
 ONLY=()
+LANDED=""
 PROTECT_DEFAULT="omega-cascade omega-w4b omega-prefill omega-flashnext omega-dflash omega-symbolic sc-cascade sc-batch sc-docmem sc-dflash sc-flashnext sc-skipped sc-alpha-docs omega-alpha m1-passport"
 PROTECT="${SPARK_CLEANUP_PROTECT:-$PROTECT_DEFAULT}"
 
@@ -119,6 +156,7 @@ usage() { sed -n '2,/^set -uo pipefail/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'
 while [ $# -gt 0 ]; do
   case "$1" in
     --apply) APPLY=1 ;;
+    --landed) LANDED="${2:-}"; APPLY=1; CLASSES=landed; shift ;;
     --dry-run) APPLY=0 ;;
     --classes) CLASSES="$2"; shift ;;
     --if-below) IF_BELOW="$2"; shift ;;
@@ -144,22 +182,38 @@ H="$HOME"
 STATE="$H/.local/state/spark-cleanup"
 mkdir -p "$STATE"
 LOG="$STATE/$(date +%F).log"
-TMPD=$(mktemp -d "${TMPDIR:-/tmp}/spark-cleanup.XXXXXX")
-trap 'rm -rf "$TMPD"' EXIT
-MODE=$([ $APPLY = 1 ] && echo APPLY || echo DRY-RUN)
-
+# landing mode writes only to the log: the hook that starts it is detached
+[ -n "$LANDED" ] && exec >/dev/null 2>>"$LOG"
 log() { printf '%s %s\n' "$(date +%FT%T)" "$*" | tee -a "$LOG"; }
+# no scratch folder, no run: every class writes its lists there, and an empty path would put them at /
+if ! TMPD=$(mktemp -d "${TMPDIR:-/tmp}/spark-cleanup.XXXXXX" 2>>"$LOG") || [ ! -d "$TMPD" ]; then
+  log "ALARM cannot create a scratch folder under ${TMPDIR:-/tmp} (missing, full or unwritable): nothing checked, nothing removed"
+  echo "spark-cleanup: cannot create a scratch folder under ${TMPDIR:-/tmp}" >&2
+  [ -n "$LANDED" ] && exit 0
+  exit 1
+fi
+trap 'rm -rf "$TMPD"' EXIT
+MODE=$([ -n "$LANDED" ] && echo "LANDED $LANDED" || { [ $APPLY = 1 ] && echo APPLY || echo DRY-RUN; })
+
 free_bytes() { df -B1 --output=avail / | tail -1 | tr -d ' '; }
 free_pct() { df -B1 --output=size,avail / | tail -1 | awk '{printf "%d", $2*100/$1}'; }
 human() { awk -v b="$1" 'BEGIN{ printf "%.1fG", b/1e9 }'; }
 
 C8MAX_H="${SPARK_CLEANUP_CLASS8_MAX_H:-6}"
 if ! [[ "$C8MAX_H" =~ ^[0-9]+$ ]]; then log "ALARM bad SPARK_CLEANUP_CLASS8_MAX_H='$C8MAX_H' (whole hours expected); using 6"; C8MAX_H=6; fi
+# no size cap decides a removal (standing rule: no hard caps); an entry removed or kept that is
+# bigger than this many bytes is named in one ALARM line at the end of the run so someone looks
+BIG_ALARM="${SPARK_CLEANUP_BIG_ALARM:-5368709120}"
+if ! [[ "$BIG_ALARM" =~ ^[0-9]+$ ]]; then log "ALARM bad SPARK_CLEANUP_BIG_ALARM='$BIG_ALARM' (whole bytes expected); using 5368709120"; BIG_ALARM=5368709120; fi
+BIG=()
+big_note() { [ "${2:-0}" -gt "$BIG_ALARM" ] && BIG+=("$1 $(human "$2") ($3)"); return 0; }
 # one run at a time
 # a dry class 8 run (a person or reviewer looking) has its own lock and never touches the
 # --apply run's marks, so it cannot block, or raise a false alarm about, the daily scan
 if [ "$CLASSES" = 8 ]; then exec 9>"$STATE/class8$( [ $APPLY = 1 ] || echo -dry).lock"; else exec 9>"$STATE/run.lock"; fi
-if ! flock -n 9; then
+if [ -n "$LANDED" ]; then
+  flock 9   # a landing waits for the run before it: skipping would leave this landing's copies for the next one
+elif ! flock -n 9; then
   echo "spark-cleanup already running" >&2
   if [ "$CLASSES" = 8 ]; then
     # a class 8 scan still running: say so in the log, and alarm once if it has run past the threshold
@@ -218,6 +272,15 @@ collect_inuse() {
   } | sed 's/ (deleted)$//' | grep '^/' | grep -vx / | sort -u > "$INUSE"
 }
 collect_inuse
+# class 5 reads /tmp; the test suite points it at a scratch folder, never on the real home
+TMPROOT=/tmp
+if [ -n "${SPARK_CLEANUP_TEST_TMPROOT:-}" ]; then
+  if [ "$H" = "$(getent passwd "$(id -un)" | cut -d: -f6)" ]; then
+    log "ALARM SPARK_CLEANUP_TEST_TMPROOT is set on the real home: ignored, class 5 reads /tmp"
+  else
+    TMPROOT="${SPARK_CLEANUP_TEST_TMPROOT%/}"; log "test hook: class 5 reads $TMPROOT instead of /tmp (scratch home $H)"
+  fi
+fi
 in_use() {  # $1 = dir; true if any in-use path is the dir or below it
   grep -qxF -- "$1" "$INUSE" && return 0
   grep -qF -- "$1/" "$INUSE"
@@ -262,8 +325,8 @@ export GIT_OPTIONAL_LOCKS=0
 # every bare repository in the store, nested ones included (the store has folders of them)
 mapfile -t STORE_REPOS < <(find "$GITSTORE" -maxdepth 4 -type d -name '*.git' -prune 2>/dev/null | sort)
 [ ${#STORE_REPOS[@]} -gt 0 ] && rm -f "$STATE/store-empty-posted"
-if [ ${#STORE_REPOS[@]} -eq 0 ] && { want 2 || want 8; }; then
-  log "ALARM git store $GITSTORE holds no bare repositories: class 2 keeps every worktree and class 8 calls every copy unstored until it is fixed"
+if [ ${#STORE_REPOS[@]} -eq 0 ] && { want 2 || want 5 || want 8; }; then
+  log "ALARM git store $GITSTORE holds no bare repositories: class 2 keeps every worktree, class 5 every /tmp git copy, and class 8 calls every copy unstored until it is fixed"
   [ $APPLY = 1 ] && [ ${#ONLY[@]} -eq 0 ] && [ ! -e "$STATE/store-empty-posted" ] && touch "$STATE/store-empty-posted" && printf '%s ALARM spark-cleanup to all: the git store %s holds no bare repositories; nothing can be checked as saved. See %s.\n' "$(date -u +%FT%H:%MZ)" "$GITSTORE" "$LOG" >> "${SPARK_CLEANUP_BOARD:-$H/handoffs/BOARD.md}"
 fi
 declare -A STORE_HIT=()
@@ -277,18 +340,25 @@ in_git_store() {  # $1 commit sha; true if a ref of a bare repo in the store rea
   STORE_HIT[$1]=0; return 1
 }
 repo_heads() {  # $1 repo dir: HEAD, plus every ref (branches, stash, tags AND remote-tracking)
-  # of a main clone. A commit that exists only as a remote-tracking ref is not saved.
-  # A linked worktree (.git is a file) shares its refs with the main clone, so only its own HEAD
-  # is its work. Exit 1 when git cannot read the repository.
+  # of a repository that owns its refs. A commit that exists only as a remote-tracking ref is not saved.
+  # A linked worktree (git dir differs from the common dir) shares its refs with the main clone,
+  # which is judged on its own, so only its HEAD is its work. A submodule or separate-git-dir
+  # checkout also has a .git file, but owns its refs: all of them count.
+  # Exit 1 when git cannot read the repository.
+  local gd cd
   git -C "$1" rev-parse --verify -q 'HEAD^{commit}' 2>/dev/null || git -C "$1" rev-parse --git-dir >/dev/null 2>&1 || return 1
-  [ -f "$1/.git" ] && return 0
+  gd=$(git -C "$1" rev-parse --path-format=absolute --git-dir 2>/dev/null) || return 1
+  cd=$(git -C "$1" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
+  [ "$gd" != "$cd" ] && return 0
   git -C "$1" for-each-ref --format='%(objectname) %(refname)' 2>/dev/null | awk '{print $1}'
 }
 # 0 and a one-line reason when the copy holds bytes a plain `git status --porcelain` can hide
 # or any other unsaved change. Forces untracked and ignored files on. Compares skip-worktree
-# (S) and assume-unchanged (h) files with the index, which status does not show.
+# (S) and assume-unchanged (h) files with the index, which status does not show: bytes, the
+# executable bit and symlink-ness. Then checks every checkout nested inside the copy (in
+# ignored folders too) the same way; $2 set means "this is a nested one, do not descend".
 copy_unsaved() {
-  local s rc line path flag idx wt
+  local s rc line path flag idx wt meta mode d why
   s=$(git -C "$1" -c status.showUntrackedFiles=all status --porcelain=v1 --untracked-files=all --ignored=matching 2>/dev/null)
   rc=$?
   if [ "$rc" -ne 0 ]; then echo "git status failed"; return 0; fi
@@ -296,39 +366,50 @@ copy_unsaved() {
   if [ -n "$line" ]; then echo "uncommitted or untracked changes"; return 0; fi
   line=$(printf '%s\n' "$s" | grep '^!! ' | grep -vE "$BUILD_JUNK_RE" | head -1 || true)
   if [ -n "$line" ]; then echo "ignored files that are not build output (${line#!! })"; return 0; fi
-  while IFS= read -r line; do
-    [ -n "$line" ] || continue
+  while IFS= read -r -d '' line; do
     flag=${line:0:1}
     case "$flag" in S|s|h) ;; *) continue ;; esac
-    path=${line:2}
-    if [ ! -e "$1/$path" ]; then echo "skip-worktree path missing ($path)"; return 0; fi
-    idx=$(git -C "$1" rev-parse -q --verify ":$path" 2>/dev/null) || { echo "skip-worktree path not in the index ($path)"; return 0; }
-    wt=$(git -C "$1" hash-object -- "$1/$path" 2>/dev/null) || { echo "skip-worktree path cannot be read ($path)"; return 0; }
+    meta=${line%%$'\t'*}; path=${line#*$'\t'}
+    read -r _ mode idx _ <<<"$meta"
+    [ "$mode" = 160000 ] && continue   # a submodule: judged as a nested repository
+    if [ ! -e "$1/$path" ] && [ ! -L "$1/$path" ]; then echo "skip-worktree path missing ($path)"; return 0; fi
+    case "$mode" in
+      120000)
+        [ -L "$1/$path" ] || { echo "skip-worktree or assume-unchanged symlink replaced ($path)"; return 0; }
+        wt=$(printf '%s' "$(readlink "$1/$path")" | git -C "$1" hash-object --stdin 2>/dev/null) || { echo "skip-worktree path cannot be read ($path)"; return 0; }
+        ;;
+      100644|100755)
+        if [ -L "$1/$path" ] || [ ! -f "$1/$path" ]; then echo "skip-worktree or assume-unchanged file replaced ($path)"; return 0; fi
+        if (( 0$(stat -c %a -- "$1/$path") & 0100 )); then [ "$mode" = 100755 ]; else [ "$mode" = 100644 ]; fi \
+          || { echo "skip-worktree or assume-unchanged file executable bit differs from the saved copy ($path)"; return 0; }
+        wt=$(git -C "$1" hash-object -- "$1/$path" 2>/dev/null) || { echo "skip-worktree path cannot be read ($path)"; return 0; }
+        ;;
+      *) echo "skip-worktree path has unknown mode $mode ($path)"; return 0 ;;
+    esac
     if [ "$idx" != "$wt" ]; then echo "skip-worktree or assume-unchanged file differs from the saved copy ($path)"; return 0; fi
-  done < <(git -C "$1" ls-files -v -- 2>/dev/null || true)
+  done < <(git -C "$1" ls-files -v -s -z -- 2>/dev/null || true)
+  [ -n "${2:-}" ] && return 1
+  while IFS= read -r d; do
+    [ -e "$d/.git" ] || continue   # a bare repository has no files to lose; its refs are checked by nested_unstored
+    if why=$(copy_unsaved "$d" nested); then echo "nested repository has unsaved files ($d: $why)"; return 0; fi
+  done < <(each_nested_repo "$1")
   return 1
 }
 # Prints each repository inside $1, not $1 itself. A checkout is the parent of a
-# path named .git. A bare repository is the directory itself when its name ends
-# in .git (for example .lake/packages/dep.git) and git says it is bare.
+# path named .git. A bare repository is found by its shape whatever its name
+# (.lake/packages/dep, vendor, dep.git): a folder holding a HEAD file, objects/ and refs/.
 each_nested_repo() {
   local g dir
   while IFS= read -r g; do
     [ -n "$g" ] || continue
     case "$g" in
-      */.git)
-        dir=${g%/.git}
-        [ "$dir" = "$1" ] && continue
-        printf '%s\n' "$dir"
-        ;;
+      */.git) printf '%s\n' "${g%/.git}" ;;
       *)
-        [ -d "$g" ] || continue
-        [ "$(git -C "$g" rev-parse --is-bare-repository 2>/dev/null)" = true ] || continue
-        printf '%s\n' "$g"
+        dir=${g%/HEAD}
+        [ -d "$dir/objects" ] && [ -d "$dir/refs" ] && printf '%s\n' "$dir"
         ;;
     esac
-  done < <(find "$1" -xdev \( -path "$1/.git" -o -path "$1/.git/*" \) -prune -o \
-            \( -name .git -o -type d -name '*.git' \) -print 2>/dev/null)
+  done < <(find "$1" -xdev -path "$1/.git" -prune -o -name .git -print -prune -o -type f -name HEAD -print 2>/dev/null)
 }
 # 0 and a one-line reason when a repository inside the copy, or a submodule commit, is not in ~/git.
 # Looks in ignored folders and .lake too, and at bare repositories there. Those folders are build
@@ -365,6 +446,7 @@ remove_dir() {  # $1 class, $2 path, $3 reason-safe ; optional $4 lockfile
   case "$d" in /tmp/?*) [ "$depth" -eq 2 ] && depth=3 ;; esac
   if [ "$depth" -lt 3 ] || [ "$d" = "$H" ]; then REFUSED=$((REFUSED+1)); return; fi
   sz=$(size_of "$d"); sz=${sz:-0}
+  big_note "$d" "$sz" "class$c $([ $APPLY = 1 ] && echo removed || echo would-remove)"
   if [ $APPLY = 1 ] && case ",${DRY_CLASSES// /}," in *",$c,"*) false ;; *) true ;; esac; then
     if [ -n "$lf" ]; then
       flock -n "$lf" $SUDO rm -rf --one-file-system -- "$d" || { log "class$c SKIP lock-taken $d"; return; }
@@ -430,7 +512,7 @@ class1() {
   done
   # per-SHA CI dirs (class "1s"): <repo>/<lane>/<40-hex sha>, each with its own
   # lock file; older SHAs that have none fall back to the lane lock
-  local lane s sl newest ssz smax="${SPARK_CLEANUP_CI_SHA_MAX:-5368709120}"
+  local lane s sl newest ssz
   for lane in $($SUDO find /var/lib/aien-run/target -mindepth 2 -maxdepth 2 -type d 2>/dev/null); do
     newest=$($SUDO find "$lane" -mindepth 1 -maxdepth 1 -type d -regextype posix-extended -regex '.*/[0-9a-f]{40}' -printf '%T@ %p\n' 2>/dev/null | sort -n | tail -1 | cut -d' ' -f2-)
     [ -n "$newest" ] || continue
@@ -444,7 +526,7 @@ class1() {
       if in_use "$s"; then log "class1s SKIP in-use $s"; continue; fi
       if recent "$s" $((AGE_H*60)); then log "class1s SKIP modified<${AGE_H}h $s"; continue; fi
       ssz=$(size_of "$s"); ssz=${ssz:-0}
-      if [ "$ssz" -gt "$smax" ]; then log "class1s REVIEW $(human "$ssz") $s (over $(human "$smax") cap: manual review, not removed)"; continue; fi
+      log "class1s SIZE $(human "$ssz") $s"
       remove_dir 1s "$s" "per-SHA CI build output, not newest in lane, lock free, idle ${AGE_H}h" "$sl"
     done
   done
@@ -557,13 +639,34 @@ class4() {
 }
 
 # ---------------- class 5: /tmp ----------------
+# 0 and one line saying what, when a git repository in $1 ($1 itself included, nested ones
+# and bare ones of any name too) holds something not saved in ~/git: the class 8 test of
+# refs, submodule commits and unsaved files, repository by repository
+repos_unsaved() {
+  local r heads sha why
+  while IFS= read -r r; do
+    [ -n "$r" ] || continue
+    if ! heads=$(repo_heads "$r"); then echo "git cannot read $r"; return 0; fi
+    while read -r sha; do
+      [ -n "$sha" ] || continue
+      in_git_store "$sha" || { echo "ref $sha of $r not in ~/git"; return 0; }
+    done < <(sort -u <<<"$heads")
+    [ -e "$r/.git" ] || continue
+    while read -r sha; do
+      [ -n "$sha" ] || continue
+      in_git_store "$sha" || { echo "submodule commit $sha of $r not in ~/git"; return 0; }
+    done < <(git -C "$r" ls-tree -r HEAD 2>/dev/null | awk '$2=="commit" {print $3}')
+    if why=$(copy_unsaved "$r" nested); then echo "$why in $r"; return 0; fi
+  done < <({ [ -e "$1/.git" ] || { [ -f "$1/HEAD" ] && [ -d "$1/objects" ] && [ -d "$1/refs" ]; }; } && printf '%s\n' "$1"; each_nested_repo "$1")
+  return 1
+}
 class5() {
-  local d sz max="${SPARK_CLEANUP_TMP_MAX:-5368709120}" named="$TMPD/c5named"
+  local d sz why named="$TMPD/c5named"
   # /tmp paths a worker's RESUME.md or a lock file names stay, however old
   { find "$H/handoffs" -maxdepth 3 -name 'RESUME*.md' -type f -print0 2>/dev/null
-    find /tmp -maxdepth 1 -name '*.lock' -type f -size -64k -print0 2>/dev/null
-  } | xargs -0r grep -ohaE '/tmp/[A-Za-z0-9._+-]+' 2>/dev/null | sed 's#[.]*$##' | sort -u > "$named"
-  for d in /tmp/* /tmp/.[!.]*; do
+    find "$TMPROOT" -maxdepth 1 -name '*.lock' -type f -size -64k -print0 2>/dev/null
+  } | xargs -0r grep -ohaE "$TMPROOT/[A-Za-z0-9._+-]+" 2>/dev/null | sed 's#[.]*$##' | sort -u > "$named"
+  for d in "$TMPROOT"/* "$TMPROOT"/.[!.]*; do
     [ -e "$d" ] || continue
     # lock/slot/admit files (q36-extra uses .lock1/.lock2/.admit) and every aien-q36 marker stay:
     # deleting a flock file while a holder has it open breaks mutual exclusion
@@ -573,9 +676,13 @@ class5() {
     if recent "$d" $((2*1440)); then continue; fi
     if protected_path "$d"; then log "class5 SKIP protected $d"; continue; fi
     if grep -qxF -- "$d" "$named"; then log "class5 SKIP named-by-resume-or-lock $d"; continue; fi
-    sz=$(size_of "$d"); sz=${sz:-0}
-    if [ "$sz" -gt "$max" ]; then log "class5 SKIP over-cap $(human "$sz") $d (needs review)"; continue; fi
-    remove_dir 5 "$d" "/tmp entry untouched 2d, nothing open"
+    # a git copy in /tmp is removed only when everything in it is saved in ~/git
+    if [ -d "$d" ] && why=$(repos_unsaved "$d"); then
+      sz=$(size_of "$d"); sz=${sz:-0}
+      log "class5 SKIP unsaved ($why) $(human "$sz") $d"; big_note "$d" "$sz" "class5 kept: unsaved"
+      continue
+    fi
+    remove_dir 5 "$d" "/tmp entry untouched 2d, nothing open, every git repository in it saved in ~/git"
   done
 }
 
@@ -604,6 +711,33 @@ class7() {
 # ---------------- class 8: leftover copies (ALARM, report only) ----------------
 # Agents must delete their own copies when their task is done (omega-harness rule
 # clean-up-after-yourself). This class finds the ones that did not. It never deletes.
+# The --landed mode removes or archives the same copies, one landed repository at a time.
+
+# Every task copy under the roots ($@), one per line, sorted. A repository inside one
+# already listed (handled or skipped later) belongs to that copy; a linked worktree (its
+# .git file points into some clone's .git/worktrees/) is its own task copy wherever it
+# sits: agents' isolated worktrees live inside the main clones.
+copy_list() {
+  local r up inner
+  local -A root=()
+  while read -r r; do
+    case "$r/" in "$GITSTORE"/*) continue ;; esac
+    up="${r%/*}"; inner=0
+    while [ "${#up}" -gt "${#H}" ]; do [ -n "${root[$up]:-}" ] && { inner=1; break; }; up="${up%/*}"; done
+    if [ $inner = 1 ] && ! grep -qs '^gitdir: .*/\.git/worktrees/' "$r/.git"; then continue; fi
+    root[$r]=1
+    printf '%s\n' "$r"
+  done < <(find "$@" -xdev -maxdepth 6 \( -name node_modules -o -name target -o -name .lake -o -name venv -o -name .venv \) -prune \
+       -o -name .git -print -prune 2>/dev/null | sed 's#/\.git$##' | sort)
+}
+# main clones, as the standing rules name them (~/workspace/<name> without a '-', here also with a
+# real .git folder), are shared reference copies: class 8 still checks them and reports work at risk
+# in one, but a clean one is a SKIP line, not a "remove it" alarm; --landed never touches them
+is_main_clone() {
+  [ -d "$1/.git" ] || return 1
+  case "$1" in "$H"/workspace/*/*) return 1 ;; "$H"/workspace/*-*) return 1 ;; "$H"/workspace/*) return 0 ;; esac
+  return 1
+}
 class8() {
   local r n=0 bytes=0 kind why sz heads bad dirty ign f t0; t0=$(date +%s)
   local idle_min=$((3*1440))
@@ -614,23 +748,9 @@ class8() {
   [ $marks = 1 ] && date +%s > "$STATE/class8.started"
   local mainskip=0 main
   : > "$TMPD/c8kinds"; : > "$TMPD/c8dirs"
-  find "${roots[@]}" -xdev -maxdepth 6 \( -name node_modules -o -name target -o -name .lake -o -name venv -o -name .venv \) -prune \
-       -o -name .git -print -prune 2>/dev/null | sed 's#/\.git$##' | sort > "$TMPD/c8"
-  local -A root=()
+  copy_list "${roots[@]}" > "$TMPD/c8"
   while read -r r; do
-    case "$r/" in "$GITSTORE"/*) continue ;; esac
-    # a repository inside one already seen (handled or skipped) belongs to that copy
-    local up="${r%/*}" inner=0
-    while [ "${#up}" -gt "${#H}" ]; do [ -n "${root[$up]:-}" ] && { inner=1; break; }; up="${up%/*}"; done
-    # a linked worktree (its .git file points into some clone's .git/worktrees/) is its own task copy,
-    # wherever it sits: agents' isolated worktrees live inside the main clones
-    if [ $inner = 1 ] && ! grep -qs '^gitdir: .*/\.git/worktrees/' "$r/.git"; then continue; fi
-    root[$r]=1
-    # main clones, as the standing rules name them (~/workspace/<name> without a '-', here also with a
-    # real .git folder), are shared reference copies: they are still checked, and work at risk in one is
-    # reported, but a clean one is a SKIP line, not a "remove it" alarm
-    main=0
-    if [ -d "$r/.git" ]; then case "$r" in "$H"/workspace/*/*) ;; "$H"/workspace/*-*) ;; "$H"/workspace/*) main=1 ;; esac; fi
+    main=0; is_main_clone "$r" && main=1
     protected_path "$r" && continue
     in_use "$r" && continue
     recent "$r" "$idle_min" && continue
@@ -688,6 +808,155 @@ class8() {
   fi
 }
 
+# ---------------- --landed REPO: remove or archive that repository's finished copies ----------------
+LANDED_IDLE_H="${SPARK_CLEANUP_LANDED_IDLE_H:-6}"
+LANDED_ARCHIVE_D="${SPARK_CLEANUP_LANDED_ARCHIVE_D:-3}"
+CLAIM_DAYS="${SPARK_CLEANUP_CLAIM_DAYS:-14}"
+ARCHIVE="${SPARK_CLEANUP_ARCHIVE:-$H/archive/agent-work}"
+LANDED_ROOTS="" LKEEP=0 LREMOVED=0 LARCHIVED=0
+lkeep() { log "landed KEEP $1 ($2)"; LKEEP=$((LKEEP+1)); }
+# allocated bytes of the files only this folder holds (hard links elsewhere free nothing)
+single_link_bytes() { $SUDO find "$1" -xdev -type f -links 1 -printf '%b\n' 2>/dev/null | awk '{s+=$1} END {printf "%d", s*512}'; }
+# true when nothing outside .git folders changed for $2 minutes and find read the whole copy:
+# a landing writes only inside .git (remote-tracking refs), so the copy it came from still counts as idle
+idle_outside_git() {
+  local out; out=$($SUDO find "$1" -xdev -name .git -prune -o -mmin "-$2" -print -quit 2>/dev/null) || return 1
+  [ -z "$out" ]
+}
+# the main working folder of a git common dir (a bare main repository is its own)
+main_of() { case "$1" in */.git) printf '%s\n' "${1%/.git}" ;; *) printf '%s\n' "$1" ;; esac; }
+# true when a remote URL of the copy names the repository, or HEAD has a root commit of ~/git/**/<repo>.git
+copy_matches_repo() {  # $1 copy, $2 repository name
+  local k u c
+  while read -r k u; do
+    u=${u%/}; u=${u%.git}
+    [ "${u##*[/:]}" = "$2" ] && return 0
+  done < <(git -C "$1" config --get-regexp '^remote\..*\.url$' 2>/dev/null)
+  [ -n "$LANDED_ROOTS" ] || return 1
+  while read -r c; do
+    [ -n "$c" ] && grep -qxF -- "$c" <<<"$LANDED_ROOTS" && return 0
+  done < <(git -C "$1" rev-list --max-parents=0 HEAD 2>/dev/null)
+  return 1
+}
+# true when a board CLAIM line of the last CLAIM_DAYS days names the copy, or its worktree is locked
+claimed() {  # $1 copy, $2 file of claim lines
+  grep -qF -- "$1" "$2" && return 0
+  grep -qF -- "~/${1#"$H"/}" "$2" && return 0
+  [ -f "$1/.git" ] && [ -e "$(git -C "$1" rev-parse --path-format=absolute --git-dir 2>/dev/null)/locked" ] && return 0
+  return 1
+}
+deep_enough() { [ "$(awk -F/ '{print NF-1}' <<<"$1")" -ge 3 ] && [ "$1" != "$H" ]; }
+landed_remove() {  # $1 copy, $2 git dir, $3 common dir: saved and idle
+  local r="$1" sz
+  deep_enough "$r" || { REFUSED=$((REFUSED+1)); lkeep "$r" "too shallow to remove"; return; }
+  sz=$(single_link_bytes "$r")
+  if [ "$2" != "$3" ]; then
+    git -C "$(main_of "$3")" worktree remove "$r" >>"$LOG" 2>&1 || { lkeep "$r" "git worktree remove refused it (message above)"; return; }
+    git -C "$(main_of "$3")" worktree prune >>"$LOG" 2>&1
+  else
+    rm -rf --one-file-system -- "$r" 2>/dev/null || $SUDO rm -rf --one-file-system -- "$r"
+  fi
+  if [ -e "$r" ]; then log "landed ALARM $r partly removed: everything in it was saved, look at what is left"; return; fi
+  log "landed REMOVED $(human "$sz") $r (saved: every ref and nested commit in ~/git, nothing unsaved, idle ${LANDED_IDLE_H} h+; $sz single-link bytes)"
+  LREMOVED=$((LREMOVED+1)); TOTAL=$((TOTAL+sz))
+  big_note "$r" "$sz" "landed removed"
+}
+landed_archive() {  # $1 copy, $2 git dir, $3 common dir, $4 what is unsaved
+  local r="$1" gd="$2" cd="$3" why="$4" name a stage brel="" head="" f sz sha na ns ps
+  local members=("${1#/}") nots=()
+  deep_enough "$r" || { REFUSED=$((REFUSED+1)); lkeep "$r" "too shallow to archive"; return; }
+  mkdir -p "$ARCHIVE" || { lkeep "$r" "unsaved ($why); cannot create $ARCHIVE"; return; }
+  name=$(basename "$r"); a="$ARCHIVE/$name.tar.zst"
+  [ -e "$a" ] && a="$ARCHIVE/$name-$(date +%Y%m%dT%H%M%S).tar.zst"
+  [ -e "$a" ] && { lkeep "$r" "unsaved ($why); archive name $a taken"; return; }
+  stage=$(mktemp -d "$TMPD/stage.XXXXXX")
+  if [ "$gd" != "$cd" ]; then
+    # a linked worktree: its record in the main clone goes into the archive too, and a HEAD that no
+    # ~/git repository holds goes in as a bundle (removing the worktree drops the only ref to it)
+    members+=("${gd#/}")
+    head=$(git -C "$r" rev-parse -q --verify 'HEAD^{commit}' 2>/dev/null)
+    if [ -n "$head" ] && ! in_git_store "$head"; then
+      while read -r f; do [ -n "$f" ] && in_git_store "$f" && nots+=("^$f"); done < <(git -C "$r" for-each-ref --format='%(objectname)' refs/heads refs/remotes 2>/dev/null | sort -u)
+      brel="${r#/}.HEAD.bundle"; mkdir -p "$stage/$(dirname "$brel")"
+      git -C "$r" bundle create "$stage/$brel" HEAD "${nots[@]}" >>"$LOG" 2>&1 || { lkeep "$r" "unsaved ($why); bundle of HEAD failed"; return; }
+    fi
+  fi
+  local tarargs=(-C / "${members[@]}"); [ -n "$brel" ] && tarargs+=(-C "$stage" "$brel")
+  $SUDO tar -cf - "${tarargs[@]}" 2>>"$LOG" | zstd -q -T4 -10 -o "$a" 2>>"$LOG"
+  ps=("${PIPESTATUS[@]}")
+  if [ "${ps[0]}" != 0 ] || [ "${ps[1]}" != 0 ] || ! zstd -tq "$a" 2>>"$LOG"; then
+    rm -f "$a"; lkeep "$r" "unsaved ($why); archive failed (tar ${ps[0]}, zstd ${ps[1]})"; return
+  fi
+  na=$(zstd -dc "$a" | tar -tf - | wc -l)
+  ns=$(cd / && $SUDO find "${members[@]}" 2>/dev/null | wc -l); [ -n "$brel" ] && ns=$((ns+1))
+  if [ "$na" != "$ns" ]; then rm -f "$a"; lkeep "$r" "unsaved ($why); archive holds $na entries, the copy $ns"; return; fi
+  sz=$(single_link_bytes "$r"); sha=$(sha256sum "$a" | cut -d' ' -f1)
+  rm -rf --one-file-system -- "$r" 2>/dev/null || $SUDO rm -rf --one-file-system -- "$r"
+  if [ -e "$r" ]; then log "landed ALARM $r archived to $a but not fully removed: look at what is left"; return; fi
+  [ "$gd" != "$cd" ] && git -C "$(main_of "$cd")" worktree prune >>"$LOG" 2>&1
+  mkdir -p "$r"
+  {
+    echo "Archived $(date -u +%FT%TZ) by spark-cleanup --landed $LANDED: unsaved work, nothing written for ${LANDED_ARCHIVE_D} days or more."
+    echo "why: $why"
+    echo "archive: $a"
+    echo "sha256: $sha"
+    echo "entries: $na"
+    if [ -n "$brel" ]; then
+      # the bundle goes into the main clone first: once the worktree record is back, its HEAD names
+      # a commit the clone lacks and git refuses to unbundle into a repository with a broken HEAD
+      echo "restore: cd / && zstd -dc '$a' | tar -xf - '$brel' && git -C '$(main_of "$cd")' bundle unbundle '/$brel' >/dev/null && zstd -dc '$a' | tar -xf - && rm '/$brel' '$r/ARCHIVED.txt'"
+      echo "note: HEAD $head was in no ~/git repository; the archive holds it as a bundle that the restore line puts back into the main clone. If the main clone is gone, clone it from ~/git first."
+    else
+      echo "restore: cd / && zstd -dc '$a' | tar -xf - && rm '$r/ARCHIVED.txt'"
+    fi
+    [ "$gd" != "$cd" ] && echo "worktree: the archive also puts back its record $gd in the main clone $(main_of "$cd")"
+  } > "$r/ARCHIVED.txt"
+  log "landed ARCHIVED $(human "$sz") $r -> $a (unsaved: $why; $na entries, sha256 $sha, $sz single-link bytes)"
+  LARCHIVED=$((LARCHIVED+1)); TOTAL=$((TOTAL+sz))
+}
+landed() {
+  local repo="${LANDED%.git}" r b gd cd heads bad f nest uns n v why
+  if ! [[ "$repo" =~ ^[A-Za-z0-9_][A-Za-z0-9._-]*$ ]]; then log "landed ALARM bad repository name '$LANDED': nothing done"; return; fi
+  for v in LANDED_IDLE_H:6 LANDED_ARCHIVE_D:3 CLAIM_DAYS:14; do
+    n=${v%%:*}
+    [[ "${!n}" =~ ^[0-9]+$ ]] || { log "landed ALARM bad SPARK_CLEANUP_$n='${!n}' (whole number expected); using ${v#*:}"; printf -v "$n" '%s' "${v#*:}"; }
+  done
+  if [ ${#STORE_REPOS[@]} -eq 0 ]; then log "landed ALARM git store $GITSTORE holds no bare repositories: nothing can be checked as saved, nothing done"; return; fi
+  for b in "${STORE_REPOS[@]}"; do [ "${b##*/}" = "$repo.git" ] && LANDED_ROOTS+="$(git -C "$b" rev-list --max-parents=0 --all 2>/dev/null)"$'\n'; done
+  [ -n "${LANDED_ROOTS//$'\n'/}" ] || { LANDED_ROOTS=""; log "landed: no $repo.git with commits in $GITSTORE; copies matched by remote URL only"; }
+  local roots=(); for r in "$H/workspace" "$H/work" "$H/.claude/jobs"; do [ -d "$r" ] && roots+=("$r"); done
+  [ ${#roots[@]} -gt 0 ] || { log "landed $repo: no copy folders"; return; }
+  local cutoff; cutoff=$(date -u -d "$CLAIM_DAYS days ago" +%FT%H:%M)
+  grep -a 'CLAIM' "${SPARK_CLEANUP_BOARD:-$H/handoffs/BOARD.md}" 2>/dev/null \
+    | awk -v c="$cutoff" '!/^[0-9][0-9][0-9][0-9]-/ || substr($1,1,16) >= c' > "$TMPD/claims"
+  copy_list "${roots[@]}" > "$TMPD/landed"
+  while read -r r; do
+    case "$r/" in /tmp/*|"$H"/handoffs/*) continue ;; esac
+    copy_matches_repo "$r" "$repo" || continue
+    if is_main_clone "$r"; then lkeep "$r" "main clone"; continue; fi
+    if protected_path "$r"; then lkeep "$r" "protected"; continue; fi
+    if in_use "$r"; then lkeep "$r" "open by a running process"; continue; fi
+    if claimed "$r" "$TMPD/claims"; then lkeep "$r" "claimed on the board or a locked worktree"; continue; fi
+    if ! idle_outside_git "$r" $((LANDED_IDLE_H*60)); then lkeep "$r" "written in the last ${LANDED_IDLE_H} h"; continue; fi
+    if ! heads=$(repo_heads "$r"); then lkeep "$r" "git cannot read it: check by hand"; continue; fi
+    gd=$(git -C "$r" rev-parse --path-format=absolute --git-dir 2>/dev/null) && cd=$(git -C "$r" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) \
+      || { lkeep "$r" "git cannot read it: check by hand"; continue; }
+    if [ "$gd" = "$cd" ] && [ "$(git -C "$r" worktree list --porcelain 2>/dev/null | grep -c '^worktree ')" -gt 1 ]; then
+      lkeep "$r" "other worktrees hang off this clone"; continue
+    fi
+    bad=0
+    while read -r f; do [ -n "$f" ] && ! in_git_store "$f" && bad=$((bad+1)); done <<<"$(sort -u <<<"$heads")"
+    nest=$(nested_unstored "$r") || true
+    uns=$(copy_unsaved "$r") || true
+    if [ "$bad" = 0 ] && [ -z "$nest" ] && [ -z "$uns" ]; then landed_remove "$r" "$gd" "$cd"; continue; fi
+    if [ "$bad" -gt 0 ]; then why="$bad ref(s) not in ~/git"; elif [ -n "$nest" ]; then why="$nest"; else why="$uns"; fi
+    if ! idle_outside_git "$r" $((LANDED_ARCHIVE_D*1440)); then lkeep "$r" "unsaved ($why), written in the last ${LANDED_ARCHIVE_D} d"; continue; fi
+    landed_archive "$r" "$gd" "$cd" "$why"
+  done < "$TMPD/landed"
+  log "landed $repo done: removed $LREMOVED, archived $LARCHIVED, kept $LKEEP; $(human "$TOTAL") of single-link files freed"
+}
+[ -n "$LANDED" ] && landed
+
 for c in 1 2 3 4 5 6 7 8; do
   want $c || continue
   b=$(free_bytes)
@@ -695,7 +964,9 @@ for c in 1 2 3 4 5 6 7 8; do
   [ $APPLY = 1 ] && log "class$c done: df free $(human "$b") -> $(human "$(free_bytes)")"
 done
 
+[ ${#BIG[@]} -gt 0 ] && log "ALARM entries over $(human "$BIG_ALARM") (SPARK_CLEANUP_BIG_ALARM=$BIG_ALARM bytes): $(printf '%s; ' "${BIG[@]}")look at why they grew"
 [ "$REFUSED" -gt 0 ] && log "REFUSED $REFUSED shallow paths (depth < 3); none removed"
 [ "$DRYTOTAL" -gt 0 ] && log "dry-classes ${DRY_CLASSES}: would-free $(human "$DRYTOTAL"), nothing removed for them"
 END_FREE=$(free_bytes)
 log "=== done $MODE: $( [ $APPLY = 1 ] && echo freed || echo would-free ) $(human "$TOTAL") (measured); df free $(human "$START_FREE") -> $(human "$END_FREE") ($(free_pct)%)"
+[ -n "$LANDED" ] && exit 0

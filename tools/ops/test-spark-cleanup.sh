@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# test-spark-cleanup.sh [SPARK_CLEANUP]: offline test of spark-cleanup classes 2 and 8 in a scratch HOME.
+# test-spark-cleanup.sh [SPARK_CLEANUP]: offline test of spark-cleanup classes 1, 2, 5 and 8 and of
+# --landed, each in a scratch HOME.
 # Never touches the real home, ~/git or the team board: HOME, the git store and the board all point
 # into a mktemp folder. Cases:
 #   c2-store    a worktree whose HEAD is in the scratch ~/git store, no upstream: removed under --apply
@@ -52,6 +53,37 @@
 #   c8-maxh     SPARK_CLEANUP_CLASS8_MAX_H=1.5 is reported loudly, not a shell error
 #   c8-only8    --apply --classes 8 does not go through quiet-build (no deleting run to lock)
 #   c8-help     --help prints the whole header, through the Usage section
+#   f1-bare-c2  a worktree holding a bare repository not named *.git (.lake/packages/dep): kept, unstored
+#   f1-bare-c8  a clone holding such a bare repository: unstored-copy, the repository still there
+#   f1-bare-c1  a cargo cache holding a bare repository named vendor: class 1 SKIP has-git
+#   f2-subbranch a clone whose submodule has a branch not in ~/git (HEAD back on main): unstored-copy
+#   f3-nestfile a clone whose nested checkout .lake/packages/dep has an untracked notes.txt: dirty-copy
+#   f4-mode     an assume-unchanged file whose only change is the executable bit: worktree kept
+#   f5-mktemp   TMPDIR that does not exist: loud ALARM, non-zero exit, nothing removed
+#   --landed lrepo (own scratch home, ~/git/lrepo.git landed):
+#   ld-exit     exit 0, nothing on stdout or stderr, one summary line: removed 3, archived 2, kept 5
+#   ld-saved    a saved idle clone (an old CLAIM 30 days back, a fresh FETCH_HEAD) is removed
+#   ld-root     a saved clone with no remote, matched by its root commit, is removed
+#   ld-recent   a saved clone with a file written now is kept (written in the last 6 h)
+#   ld-open     a saved clone that is a running process's working folder is kept (open)
+#   ld-claim    a clone named by a current CLAIM line on the board is kept
+#   ld-unsaved-recent a clone with a commit not in ~/git, written 1 day ago, is kept, not archived
+#   ld-other    a clone of another repository is not looked at
+#   ld-main     the main clone ~/workspace/lrepo is kept
+#   ld-handoffs a clone under ~/handoffs is not looked at
+#   ld-wt       a saved linked worktree with an ignored target/ is removed and pruned
+#   ld-archive  an unsaved idle clone is archived, replaced by ARCHIVED.txt, and its restore line
+#               brings back the commit and the untracked file
+#   ld-wtarch   an unsaved idle linked worktree (detached commit, dirty file) is archived with a
+#               bundle of its HEAD; after gc in the main clone, the one restore line brings it back
+#   ld-badname  --landed '../x' is a loud ALARM and does nothing
+#   class 5 (own scratch home, a scratch folder in place of /tmp, SPARK_CLEANUP_TMP_MAX=1 ignored):
+#   c5-hook     the test hook says class 5 read the scratch folder
+#   c5-unsaved  a /tmp clone with a commit not in ~/git stays: class5 SKIP unsaved naming the commit
+#   c5-nested   a /tmp folder holding a clone with an untracked file stays
+#   c5-saved    a saved /tmp clone over the old size cap goes, no over-cap line
+#   c5-junk     a /tmp folder with no repository goes
+#   c5-bigalarm one ALARM line names each entry over SPARK_CLEANUP_BIG_ALARM, removed or kept, not the small one
 # Then mutants of spark-cleanup must each make at least one case fail.
 # Ends `TEST PASS cases=N mutants=M/M` (exit 0) or `TEST FAIL ...` (exit 1).
 set -u
@@ -167,6 +199,41 @@ setup() {  # $1 scratch home
   printf 'Signature: 8a477f597d28d172789f06886806bc55\n' > "$bay/evidence/target/CACHEDIR.TAG"
   echo keep > "$bay/evidence/target/keep.txt"
   echo keep > "$h/handoffs/keep.txt"
+  # f1: bare repositories whose folder name does not end in .git, holding a commit in no store repo
+  git init -q -b main "$h/elsewhere/nb-src"
+  echo nb > "$h/elsewhere/nb-src/nb"; git -C "$h/elsewhere/nb-src" add nb; git -C "$h/elsewhere/nb-src" commit -qm nb
+  git -C "$h/workspace/proj" worktree add -q -b wt-barenose "$h/workspace/wt-barenose" main
+  mkdir -p "$h/workspace/wt-barenose/.lake/packages"
+  git clone -q --bare "$h/elsewhere/nb-src" "$h/workspace/wt-barenose/.lake/packages/dep"
+  git init -q -b main "$h/elsewhere/fx-src"
+  echo f > "$h/elsewhere/fx-src/f"; git -C "$h/elsewhere/fx-src" add f; git -C "$h/elsewhere/fx-src" commit -qm f
+  git clone -q --bare "$h/elsewhere/fx-src" "$h/git/fx.git"; rm -rf "$h/elsewhere/fx-src"
+  git clone -q "$h/git/fx.git" "$h/work/lane/baren"; echo .lake/ >> "$h/work/lane/baren/.git/info/exclude"
+  mkdir -p "$h/work/lane/baren/.lake/packages"
+  git clone -q --bare "$h/elsewhere/nb-src" "$h/work/lane/baren/.lake/packages/dep"
+  mkdir -p "$bay/cache-nosuffix/debug"
+  printf 'Signature: 8a477f597d28d172789f06886806bc55\n' > "$bay/cache-nosuffix/CACHEDIR.TAG"
+  git clone -q --bare "$h/elsewhere/nb-src" "$bay/cache-nosuffix/vendor"
+  rm -rf "$h/elsewhere/nb-src"
+  # f2: a submodule whose checked-out commit is stored, but whose branch wip is in no store repo
+  git init -q -b main "$h/elsewhere/d2-src"
+  echo e > "$h/elsewhere/d2-src/e"; git -C "$h/elsewhere/d2-src" add e; git -C "$h/elsewhere/d2-src" commit -qm e
+  git clone -q --bare "$h/elsewhere/d2-src" "$h/git/dep2.git"; rm -rf "$h/elsewhere/d2-src"
+  git clone -q "$h/git/fx.git" "$h/work/lane/super2"
+  git -C "$h/work/lane/super2" -c protocol.file.allow=always submodule add -q "$h/git/dep2.git" dep
+  git -C "$h/work/lane/super2" commit -qm sub2; git -C "$h/work/lane/super2" push -q origin HEAD:main
+  git -C "$h/work/lane/super2/dep" checkout -q -b wip; git -C "$h/work/lane/super2/dep" commit -q --allow-empty -m wip
+  git -C "$h/work/lane/super2/dep" checkout -q main
+  # f3: a nested repository in an ignored .lake/, every commit stored, an untracked file inside it
+  git init -q -b main "$h/elsewhere/nf-src"
+  echo n > "$h/elsewhere/nf-src/n"; git -C "$h/elsewhere/nf-src" add n; git -C "$h/elsewhere/nf-src" commit -qm n
+  git clone -q --bare "$h/elsewhere/nf-src" "$h/git/nf.git"; rm -rf "$h/elsewhere/nf-src"
+  git clone -q "$h/git/fx.git" "$h/work/lane/nestfile"; echo .lake/ >> "$h/work/lane/nestfile/.git/info/exclude"
+  git clone -q "$h/git/nf.git" "$h/work/lane/nestfile/.lake/packages/dep"
+  echo mine > "$h/work/lane/nestfile/.lake/packages/dep/notes.txt"
+  # f4: an assume-unchanged file whose bytes are stored but whose executable bit was turned on
+  git -C "$h/workspace/skip-repo" worktree add -q -b wt-mode "$h/workspace/wt-mode" main
+  git -C "$h/workspace/wt-mode" update-index --assume-unchanged a; chmod +x "$h/workspace/wt-mode/a"
   find "$h/workspace" "$h/work" "$h/elsewhere" "$h/handoffs" -exec touch -h -d '5 days ago' {} + 2>/dev/null
   git clone -q "$h/git/proj.git" "$h/work/lane/fresh"
   # c8-inner: a copy in use now (fresh files) holding an idle clone
@@ -186,9 +253,113 @@ check() {  # $1 case name, $2 0|1 result (0 = holds)
 }
 has() { grep -qE -- "$2" "$1"; }
 
+# --landed lrepo in its own scratch home: which copies of the landed repository go, which are
+# archived, which stay, and that an archive restores the unsaved work
+landed_cases() {  # $1 spark-cleanup copy
+  local s=$1 h n uc wc lrc sp i A
+  h=$(mktemp -d "$top/l.XXXX")
+  mkdir -p "$h/git" "$h/workspace" "$h/work/lane" "$h/handoffs/land" "$h/elsewhere"
+  git init -q -b main "$h/workspace/lrepo"
+  echo a > "$h/workspace/lrepo/a"; git -C "$h/workspace/lrepo" add a; git -C "$h/workspace/lrepo" commit -qm a
+  git clone -q --bare "$h/workspace/lrepo" "$h/git/lrepo.git"
+  git -C "$h/workspace/lrepo" remote add origin "$h/git/lrepo.git"; git -C "$h/workspace/lrepo" fetch -q origin
+  echo target/ >> "$h/workspace/lrepo/.git/info/exclude"
+  git init -q -b main "$h/elsewhere/o"
+  echo o > "$h/elsewhere/o/o"; git -C "$h/elsewhere/o" add o; git -C "$h/elsewhere/o" commit -qm o
+  git clone -q --bare "$h/elsewhere/o" "$h/git/orepo.git"; rm -rf "$h/elsewhere/o"
+  for n in saved-idle saved-noremote saved-recent saved-open claimed unsaved-old unsaved-recent; do
+    git clone -q "$h/git/lrepo.git" "$h/work/lane/$n"
+  done
+  git -C "$h/work/lane/saved-noremote" remote remove origin
+  echo u > "$h/work/lane/unsaved-old/u"; git -C "$h/work/lane/unsaved-old" add u; git -C "$h/work/lane/unsaved-old" commit -qm u
+  uc=$(git -C "$h/work/lane/unsaved-old" rev-parse HEAD); echo mine > "$h/work/lane/unsaved-old/notes.txt"
+  git -C "$h/work/lane/unsaved-recent" commit -q --allow-empty -m r
+  git clone -q "$h/git/orepo.git" "$h/work/lane/other"
+  git clone -q "$h/git/lrepo.git" "$h/handoffs/land/x"
+  git -C "$h/workspace/lrepo" worktree add -q --detach "$h/work/lane/wt-saved" main
+  mkdir -p "$h/work/lane/wt-saved/target/debug"; echo o > "$h/work/lane/wt-saved/target/debug/o"
+  git -C "$h/workspace/lrepo" worktree add -q --detach "$h/work/lane/wt-unsaved" main
+  echo w > "$h/work/lane/wt-unsaved/w"; git -C "$h/work/lane/wt-unsaved" add w; git -C "$h/work/lane/wt-unsaved" commit -qm w
+  wc=$(git -C "$h/work/lane/wt-unsaved" rev-parse HEAD); echo dirty > "$h/work/lane/wt-unsaved/d"
+  printf '%s CLAIM omp lane-x ~/work/lane/claimed for a test\n' "$(date -u +%FT%H:%M:%SZ)" > "$h/handoffs/BOARD.md"
+  printf '%s CLAIM omp lane-old ~/work/lane/saved-idle long ago\n' "$(date -u -d '30 days ago' +%FT%H:%M:%SZ)" >> "$h/handoffs/BOARD.md"
+  find "$h/workspace" "$h/work" "$h/handoffs/land" -exec touch -h -d '5 days ago' {} +
+  touch "$h/work/lane/saved-recent/a" "$h/work/lane/saved-idle/.git/FETCH_HEAD"
+  find "$h/work/lane/unsaved-recent" -exec touch -h -d '1 day ago' {} +
+  # a real process with its working folder in saved-open, as the in-use list
+  (cd "$h/work/lane/saved-open" && exec sleep 600) & sp=$!
+  for i in $(seq 50); do [ "$(readlink "/proc/$sp/cwd" 2>/dev/null)" = "$h/work/lane/saved-open" ] && break; sleep 0.1; done
+  readlink "/proc/$sp/cwd" > "$h/inuse"
+  HOME=$h SPARK_CLEANUP_QUIET=1 SPARK_CLEANUP_OFFLINE=1 SPARK_CLEANUP_GITSTORE=$h/git SPARK_CLEANUP_BOARD=$h/handoffs/BOARD.md \
+    SPARK_CLEANUP_PROTECT=none-protected SPARK_CLEANUP_TEST_INUSE_FILE=$h/inuse bash "$s" --landed lrepo > "$h/out.txt" 2>&1; lrc=$?
+  kill "$sp" 2>/dev/null; wait "$sp" 2>/dev/null
+  cat "$h"/.local/state/spark-cleanup/*.log > "$h/l1.txt"
+  HOME=$h SPARK_CLEANUP_QUIET=1 SPARK_CLEANUP_OFFLINE=1 SPARK_CLEANUP_GITSTORE=$h/git SPARK_CLEANUP_BOARD=$h/handoffs/BOARD.md \
+    SPARK_CLEANUP_TEST_INUSE_FILE=$h/inuse bash "$s" --landed '../x' > "$h/out2.txt" 2>&1
+  cat "$h"/.local/state/spark-cleanup/*.log > "$h/l2.txt"
+  local L="$h/l1.txt" W="$h/work/lane"
+  check ld-exit "$( [ "$lrc" = 0 ] && [ ! -s "$h/out.txt" ] && has "$L" "landed lrepo done: removed 3, archived 2, kept 5"; echo $?)"
+  check ld-saved "$( [ ! -e "$W/saved-idle" ] && has "$L" "landed REMOVED .*$W/saved-idle "; echo $?)"
+  check ld-root "$( [ ! -e "$W/saved-noremote" ] && has "$L" "landed REMOVED .*$W/saved-noremote "; echo $?)"
+  check ld-recent "$( [ -f "$W/saved-recent/a" ] && has "$L" "landed KEEP $W/saved-recent \(written in the last 6 h\)"; echo $?)"
+  check ld-open "$( [ -f "$W/saved-open/a" ] && has "$L" "landed KEEP $W/saved-open \(open by a running process\)"; echo $?)"
+  check ld-claim "$( [ -f "$W/claimed/a" ] && has "$L" "landed KEEP $W/claimed \(claimed"; echo $?)"
+  check ld-unsaved-recent "$( [ -d "$W/unsaved-recent/.git" ] && [ ! -e "$W/unsaved-recent/ARCHIVED.txt" ] && has "$L" "landed KEEP $W/unsaved-recent \(unsaved"; echo $?)"
+  check ld-other "$( [ -f "$W/other/o" ] && ! has "$L" "$W/other"; echo $?)"
+  check ld-main "$( [ -d "$h/workspace/lrepo/.git" ] && has "$L" "landed KEEP $h/workspace/lrepo \(main clone\)"; echo $?)"
+  check ld-handoffs "$( [ -d "$h/handoffs/land/x/.git" ] && ! has "$L" "handoffs/land"; echo $?)"
+  check ld-wt "$( [ ! -e "$W/wt-saved" ] && [ ! -e "$h/workspace/lrepo/.git/worktrees/wt-saved" ] && has "$L" "landed REMOVED .*$W/wt-saved "; echo $?)"
+  # the archived clone: only ARCHIVED.txt is left; its restore line brings back the commit and the file
+  A=$(sed -n 's/^archive: //p' "$W/unsaved-old/ARCHIVED.txt" 2>/dev/null)
+  check ld-archive "$( [ -f "$A" ] && [ "$(ls -A "$W/unsaved-old")" = ARCHIVED.txt ] && has "$L" "landed ARCHIVED .*$W/unsaved-old -> $A" \
+    && (eval "$(sed -n 's/^restore: //p' "$W/unsaved-old/ARCHIVED.txt")") && git -C "$W/unsaved-old" cat-file -e "$uc" \
+    && [ "$(cat "$W/unsaved-old/notes.txt")" = mine ] && [ ! -e "$W/unsaved-old/ARCHIVED.txt" ]; echo $?)"
+  # the archived worktree: its detached commit is gone from the main clone after gc; the one restore line brings it back
+  git -C "$h/workspace/lrepo" reflog expire --expire=now --all; git -C "$h/workspace/lrepo" gc -q --prune=now
+  check ld-wtarch "$( [ -f "$W/wt-unsaved/ARCHIVED.txt" ] && ! git -C "$h/workspace/lrepo" cat-file -e "$wc" 2>/dev/null \
+    && (eval "$(sed -n 's/^restore: //p' "$W/wt-unsaved/ARCHIVED.txt")") \
+    && [ "$(git -C "$W/wt-unsaved" rev-parse HEAD)" = "$wc" ] && git -C "$W/wt-unsaved" cat-file -e "$wc" && [ "$(cat "$W/wt-unsaved/d")" = dirty ] \
+    && [ -z "$(git -C "$W/wt-unsaved" status --porcelain -uno -- w)" ] && [ ! -e "$W/wt-unsaved.HEAD.bundle" ] && [ ! -e "$W/wt-unsaved/ARCHIVED.txt" ]; echo $?)"
+  check ld-badname "$(has "$h/l2.txt" "landed ALARM bad repository name '\.\./x'"; echo $?)"
+}
+
+# class 5 in its own scratch home, reading a scratch folder in place of /tmp: a /tmp git copy
+# goes only when everything in it is saved in ~/git; size never decides; a big entry is named
+# in one ALARM line
+class5_cases() {  # $1 spark-cleanup copy
+  local s=$1 h t L
+  h=$(mktemp -d "$top/t5.XXXX"); t="$h/tmp"
+  mkdir -p "$h/git" "$h/handoffs" "$h/src" "$t/junk" "$t/plain"
+  : > "$h/handoffs/BOARD.md"
+  git init -q -b main "$h/src/c5"
+  head -c 300000 /dev/urandom > "$h/src/c5/big"; git -C "$h/src/c5" add big; git -C "$h/src/c5" commit -qm big
+  git clone -q --bare "$h/src/c5" "$h/git/c5repo.git"; rm -rf "$h/src"
+  git clone -q "$h/git/c5repo.git" "$t/saved"
+  git clone -q "$h/git/c5repo.git" "$t/unsaved"
+  echo u > "$t/unsaved/u"; git -C "$t/unsaved" add u; git -C "$t/unsaved" commit -qm u
+  git clone -q "$h/git/c5repo.git" "$t/plain/sub"; echo mine > "$t/plain/sub/notes.txt"
+  echo j > "$t/junk/j"
+  find "$t" -exec touch -h -d '5 days ago' {} +
+  : > "$h/inuse"
+  HOME=$h SPARK_CLEANUP_QUIET=1 SPARK_CLEANUP_OFFLINE=1 SPARK_CLEANUP_GITSTORE=$h/git SPARK_CLEANUP_BOARD=$h/handoffs/BOARD.md \
+    SPARK_CLEANUP_PROTECT=none-protected SPARK_CLEANUP_DRY_CLASSES= SPARK_CLEANUP_TEST_INUSE_FILE=$h/inuse \
+    SPARK_CLEANUP_TEST_TMPROOT=$t SPARK_CLEANUP_BIG_ALARM=200000 SPARK_CLEANUP_TMP_MAX=1 \
+    bash "$s" --apply --classes 5 > "$h/out.txt" 2>&1
+  L=$h/out.txt
+  check c5-hook "$(has "$L" "test hook: class 5 reads $t instead of /tmp"; echo $?)"
+  check c5-unsaved "$( [ -f "$t/unsaved/u" ] && git -C "$t/unsaved" cat-file -e HEAD && has "$L" "class5 SKIP unsaved \(ref [0-9a-f]+ of $t/unsaved not in ~/git\) .*$t/unsaved$" && ! has "$L" "class5 REMOVED .*$t/unsaved "; echo $?)"
+  check c5-nested "$( [ -f "$t/plain/sub/notes.txt" ] && has "$L" "class5 SKIP unsaved \(.*$t/plain/sub\) .*$t/plain$"; echo $?)"
+  check c5-saved "$( [ ! -e "$t/saved" ] && has "$L" "class5 REMOVED .*$t/saved " && ! has "$L" 'over-cap'; echo $?)"
+  check c5-junk "$( [ ! -e "$t/junk" ] && has "$L" "class5 REMOVED .*$t/junk "; echo $?)"
+  check c5-bigalarm "$( [ "$(grep -c 'ALARM entries over' "$L")" = 1 ] && has "$L" "ALARM entries over .*$t/saved [0-9.]+G \(class5 removed\)" && has "$L" "ALARM entries over .*$t/unsaved [0-9.]+G \(class5 kept: unsaved\)" && ! has "$L" "ALARM entries over .*$t/junk "; echo $?)"
+}
+
 suite() {  # $1 spark-cleanup copy; sets pass/fail
   local s=$1 h
   h=$(mktemp -d "$top/h.XXXX"); setup "$h"
+  # f5: no scratch folder (TMPDIR missing): loud, nonzero, nothing removed
+  TMPDIR="$h/no-such-dir" run "$h" "$s" --apply --classes 2; local mk_rc=$?
+  local mk_ok=1; [ "$mk_rc" != 0 ] && has "$h/out.txt" 'ALARM cannot create a scratch folder' && ! has "$h/out.txt" 'REMOVED' && [ -d "$h/workspace/wt-store" ] && mk_ok=0
   run "$h" "$s" --classes 2,8
   local dry="$h/out.txt"; cp "$dry" "$h/dry.txt"
   [ ! -s "$h/handoffs/BOARD.md" ]; local dryboard=$?
@@ -269,6 +440,15 @@ suite() {  # $1 spark-cleanup copy; sets pass/fail
   check c8-help "$(has "$h/help.txt" '^Usage|^ *spark-cleanup --classes' && ! has "$h/help.txt" 'pipefail'; echo $?)"
   check c8-hook "$(has "$o" 'test hook: in-use list read from'; echo $?)"
   check c8-nodel "$( [ -d "$h/work/lane/left" ] && [ -d "$h/work/lane/unst" ] && [ -d "$h/work/lane/dirty" ] && [ -f "$h/work/lane/weights/m.safetensors" ]; echo $?)"
+  check f1-bare-c2 "$( [ -d "$h/workspace/wt-barenose/.lake/packages/dep/objects" ] && has "$o" 'class2 SKIP nested-repo .*wt-barenose' && ! has "$o" 'class2 REMOVED .*wt-barenose' && has "$o" 'class8 ALARM unstored-copy .*/workspace/wt-barenose '; echo $?)"
+  check f1-bare-c8 "$(has "$o" 'class8 ALARM unstored-copy .*/work/lane/baren ' && [ -d "$h/work/lane/baren/.lake/packages/dep/objects" ]; echo $?)"
+  check f1-bare-c1 "$( [ -d "$h/handoffs/hive/factory-bays/job/cache-nosuffix/vendor/objects" ] && has "$h/class1.txt" 'class1 SKIP has-git .*cache-nosuffix'; echo $?)"
+  check f2-subbranch "$(has "$o" 'class8 ALARM unstored-copy .*/work/lane/super2 ' && ! has "$o" 'leftover-copy .*/work/lane/super2 '; echo $?)"
+  check f3-nestfile "$(has "$o" 'class8 ALARM dirty-copy .*/work/lane/nestfile .*nested repository has unsaved files' && [ -f "$h/work/lane/nestfile/.lake/packages/dep/notes.txt" ]; echo $?)"
+  check f4-mode "$( [ -x "$h/workspace/wt-mode/a" ] && has "$o" 'class2 SKIP unsaved .*wt-mode' && ! has "$o" 'class2 REMOVED .*wt-mode'; echo $?)"
+  check f5-mktemp "$mk_ok"
+  landed_cases "$s"
+  class5_cases "$s"
 }
 
 suite "$sc"
@@ -293,13 +473,28 @@ for spec in \
   'class8-in-lock|s/SPARK_CLEANUP_SKIP8=1 "\$QB"/"\$QB"/' \
   'no-emerg-split|s/else SPARK_CLEANUP_SKIP8=1 "\$0" "\$@"; _rc=\$\?; fi/else exec "\$0" "\$@"; fi/' \
   'no-inner|s/    if \[ \$inner = 1 \] && ! grep -qs [^\n]*; then continue; fi\n//' \
-  'main-clone|s/    if \[ -d "\$r\/\.git" \]; then case [^\n]*\n//' \
+  'main-clone|s/(is_main_clone\(\) \{\n)/$1  return 1\n/' \
   'inner-wt|s/if \[ \$inner = 1 \] && ! grep -qs [^\n]*; then continue; fi/[ \$inner = 1 ] \&\& continue/' \
-  'main-by-name|s/if \[ -d "\$r\/\.git" \]; then (case [^\n]*esac); fi/$1/' \
+  'main-by-name|s/  \[ -d "\$1\/\.git" \] \|\| return 1\n//' \
   'no-unfinished|s/if \[ -n "\$_st" \] && \[ "\$\(cat "\$STATE\/class8\.finished" 2>\/dev\/null\)" != "\$_st" \]; then/if false; then/' \
   'dry-marks|s/if \[ "\$CLASSES" = 8 \] && \[ \$APPLY = 1 \]; then/if [ "\$CLASSES" = 8 ]; then/' \
   'no-nested-check|s/      if \[ -n "\$inner" \]; then log "class2 SKIP nested-repo[^\n]*\n//' \
-  'main-silent|s/"\$H"\/workspace\/\*\) main=1 ;;/"\$H"\/workspace\/*) continue ;;/' \
+  'main-silent|s/main=0; is_main_clone "\$r" && main=1/is_main_clone "\$r" \&\& continue; main=0/' \
+  'bare-by-name|s/-o -type f -name HEAD -print 2>/-o -type f -path "*.git\/HEAD" -print 2>/' \
+  'wt-heads-only|s/  \[ "\$gd" != "\$cd" \] && return 0\n/  [ -f "\$1\/.git" ] \&\& return 0\n/' \
+  'nested-unsaved|s/    if why=\$\(copy_unsaved "\$d" nested\); then [^\n]*\n//' \
+  'no-mode-check|s/\{ echo "skip-worktree or assume-unchanged file executable bit differs from the saved copy \(\$path\)"; return 0; \}/true/' \
+  'mktemp-continue|s/  \[ -n "\$LANDED" \] && exit 0\n  exit 1\nfi/fi/' \
+  'landed-idle|s/if ! idle_outside_git "\$r" \$\(\(LANDED_IDLE_H\*60\)\); then/if false; then/' \
+  'landed-inuse|s/if in_use "\$r"; then lkeep/if false; then lkeep/' \
+  'landed-claim|s/if claimed "\$r" "\$TMPD\/claims"; then/if false; then/' \
+  'landed-unsaved-removed|s/if \[ "\$bad" = 0 \] && \[ -z "\$nest" \] && \[ -z "\$uns" \]; then landed_remove/if true; then landed_remove/' \
+  'landed-archive-recent|s/if ! idle_outside_git "\$r" \$\(\(LANDED_ARCHIVE_D\*1440\)\); then/if false; then/' \
+  'landed-no-bundle|s/    if \[ -n "\$head" \] && ! in_git_store "\$head"; then/    if false; then/' \
+  'c5-no-git-check|s/if \[ -d "\$d" \] && why=\$\(repos_unsaved "\$d"\); then/if false; then/' \
+  'c5-top-only|s/; each_nested_repo "\$1"\)\n  return 1/)\n  return 1/' \
+  'c5-cap-back|s/(\n    remove_dir 5 )/\n    sz=\$(size_of "\$d"); [ "\$sz" -gt "\${SPARK_CLEANUP_TMP_MAX:-5368709120}" ] \&\& { log "class5 SKIP over-cap \$d"; continue; }$1/' \
+  'no-big-alarm|s/\n\[ \$\{#BIG\[@\]\} -gt 0 \] && log/\n[ 0 = 1 ] \&\& log/' \
   'index-write|s/export GIT_OPTIONAL_LOCKS=0\n//' \
   'no-board|s/      "\$\(date -u \+%FT%H:%MZ\)" "\$n" "\$\(human "\$bytes"\)" "\$LOG" >> "\$board"/      "x" "\$n" "x" "x" >\/dev\/null/' ; do
   name=${spec%%|*}; expr=${spec#*|}
