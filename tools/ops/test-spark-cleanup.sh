@@ -80,6 +80,23 @@
 #   ld-wtarch   an unsaved idle linked worktree (detached commit, dirty file) is archived with a
 #               bundle of its HEAD; after gc in the main clone, the one restore line brings it back
 #   ld-badname  --landed '../x' is a loud ALARM and does nothing
+#   --landed, second scratch home with no ~/handoffs/hive/CLAIMS.md (three landings: lrepo, brepo with a huge
+#   archive reserve, orepo); the board's CLAIM lines count although the other claim file is missing:
+#   l2-rootclaim a CLAIM of ~/work, ~/workspace/ and ~/.claude/jobs is not used: the saved idle copy under it
+#               is removed and the log names the claim in an ALARM
+#   l2-rootboard that claim is one ALARM line on the board, not repeated at the next two landings, and that
+#               ALARM line is not itself read as a claim (no lane "?" naming the folders; still 2 claimed paths)
+#   l2-release  a copy claimed by LaneR and then released by LaneR is removed
+#   l2-otherlane a copy claimed by LaneS stays when only LaneT posts a RELEASE
+#   l2-relfirst a copy claimed by LaneU after an earlier RELEASE of LaneU stays
+#   l2-pending  a saved copy written now is kept and listed in landed-pending; the next landing (of brepo)
+#               looks at it again; once it is idle the landing of orepo removes it ([kept at an earlier landing])
+#   l2-buildout an unsaved idle copy is archived without its ignored cargo target/, ARCHIVED.txt names it
+#               in a "left out" line, and an ignored .lake/ holding an unsaved nested repository stays in
+#   l2-noroom   with SPARK_CLEANUP_ARCHIVE_RESERVE_GB=999999999 an unsaved idle copy stays, with a "not enough
+#               free space" ALARM, and is listed in landed-pending
+#   l2-recheck  the landing of orepo, with the default reserve, archives that copy; landed-pending then
+#               lists only the copies still claimed
 #   class 5 (own scratch home, a scratch folder in place of /tmp, SPARK_CLEANUP_TMP_MAX=1 ignored):
 #   c5-hook     the test hook says class 5 read the scratch folder
 #   c5-unsaved  a /tmp clone with a commit not in ~/git stays: class5 SKIP unsaved naming the commit
@@ -334,6 +351,75 @@ landed_cases() {  # $1 spark-cleanup copy
   check ld-badname "$(has "$h/l2.txt" "landed ALARM bad repository name '\.\./x'"; echo $?)"
 }
 
+# --landed in a second scratch home: CLAIM/RELEASE, root-folder claims, copies kept for a passing reason
+# looked at again at later landings, build output left out of archives, and the free-space check
+landed2_cases() {  # $1 spark-cleanup copy
+  local s=$1 h n W A P L1 L2 L3 now
+  h=$(mktemp -d "$top/l2.XXXX"); W="$h/work"; P="$h/.local/state/spark-cleanup/landed-pending"
+  mkdir -p "$h/git" "$h/workspace" "$W" "$h/handoffs/hive" "$h/src"
+  for n in lrepo brepo orepo; do
+    git init -q -b main "$h/src/$n"; echo "$n" > "$h/src/$n/f"; git -C "$h/src/$n" add f; git -C "$h/src/$n" commit -qm "$n"
+    git clone -q --bare "$h/src/$n" "$h/git/$n.git"
+  done
+  rm -rf "$h/src"
+  for n in rootlane/idle relr/cr rels/cs relu/cu fresh/cf arch/ca; do git clone -q "$h/git/lrepo.git" "$W/$n"; done
+  git clone -q "$h/git/brepo.git" "$W/big/cb"
+  echo u > "$W/arch/ca/u"; git -C "$W/arch/ca" add u; git -C "$W/arch/ca" commit -qm u
+  printf 'target/\n.lake/\n' >> "$W/arch/ca/.git/info/exclude"
+  mkdir -p "$W/arch/ca/target/debug"; echo o > "$W/arch/ca/target/debug/o"
+  printf 'Signature: 8a477f597d28d172789f06886806bc55\n' > "$W/arch/ca/target/CACHEDIR.TAG"
+  git init -q -b main "$W/arch/ca/.lake/packages/dep"; echo d > "$W/arch/ca/.lake/packages/dep/d"
+  git -C "$W/arch/ca/.lake/packages/dep" add d; git -C "$W/arch/ca/.lake/packages/dep" commit -qm d
+  echo b > "$W/big/cb/b"; git -C "$W/big/cb" add b; git -C "$W/big/cb" commit -qm b
+  now=$(date -u +%FT%H:%M:%SZ)
+  {
+    printf '%s CLAIM omp RootLane sweeping ~/work, ~/workspace/ and ~/.claude/jobs\n' "$now"
+    printf '%s RELEASE LaneU earlier work\n' "$now"
+    printf '%s CLAIM omp LaneR ~/work/relr for a test\n' "$now"
+    printf '%s CLAIM omp LaneS ~/work/rels for a test\n' "$now"
+    printf '%s CLAIM omp LaneU ~/work/relu for a test\n' "$now"
+    printf '%s RELEASE omp LaneR done\n' "$now"
+    printf '%s LaneT RELEASE ~/work/rels\n' "$now"
+  } > "$h/handoffs/BOARD.md"
+  find "$W" -exec touch -h -d '5 days ago' {} +
+  find "$W/fresh/cf" -exec touch -h {} +
+  l2run() {  # $1 repo, rest: extra environment assignments for this landing
+    local repo=$1; shift
+    env "$@" HOME=$h SPARK_CLEANUP_QUIET=1 SPARK_CLEANUP_OFFLINE=1 SPARK_CLEANUP_GITSTORE=$h/git \
+      SPARK_CLEANUP_BOARD=$h/handoffs/BOARD.md SPARK_CLEANUP_PROTECT=none-protected SPARK_CLEANUP_TEST_INUSE_FILE=$h/inuse \
+      bash "$s" --landed "$repo" > "$h/out.txt" 2>&1
+  }
+  : > "$h/inuse"
+  l2run lrepo; cat "$h"/.local/state/spark-cleanup/*.log > "$h/r1.txt"; cp "$P" "$h/p1.txt" 2>/dev/null
+  l2run brepo SPARK_CLEANUP_ARCHIVE_RESERVE_GB=999999999
+  cat "$h"/.local/state/spark-cleanup/*.log | tail -n +$(( $(wc -l < "$h/r1.txt") + 1 )) > "$h/r2.txt"; cp "$P" "$h/p2.txt" 2>/dev/null
+  find "$W/fresh/cf" -exec touch -h -d '5 days ago' {} +
+  l2run orepo
+  cat "$h"/.local/state/spark-cleanup/*.log | tail -n +$(( $(wc -l < "$h/r1.txt") + $(wc -l < "$h/r2.txt") + 1 )) > "$h/r3.txt"
+  L1="$h/r1.txt" L2="$h/r2.txt" L3="$h/r3.txt"
+  check l2-rootclaim "$( [ ! -e "$W/rootlane/idle" ] && has "$L1" "landed REMOVED .*$W/rootlane/idle " \
+    && has "$L1" "landed ALARM CLAIM of a whole copy folder not used .*RootLane names $h/work[;\$]" \
+    && has "$L1" "RootLane names $h/workspace" && has "$L1" "RootLane names $h/.claude/jobs"; echo $?)"
+  check l2-rootboard "$( [ "$(grep -c 'ALARM spark-cleanup --landed to all: a claim line names a whole copy folder' "$h/handoffs/BOARD.md")" = 1 ] \
+    && has "$L2" "landed ALARM CLAIM of a whole copy folder" && has "$L3" "root-claim board line not repeated" \
+    && ! grep -qF ' ? names ' "$L2" "$L3" && has "$L3" "landed: 2 claimed path\(s\) "; echo $?)"
+  check l2-release "$( [ ! -e "$W/relr/cr" ] && has "$L1" "landed REMOVED .*$W/relr/cr "; echo $?)"
+  check l2-otherlane "$( [ -f "$W/rels/cs/f" ] && has "$L1" "landed KEEP $W/rels/cs \(claimed"; echo $?)"
+  check l2-relfirst "$( [ -f "$W/relu/cu/f" ] && has "$L1" "landed KEEP $W/relu/cu \(claimed"; echo $?)"
+  check l2-pending "$( has "$L1" "landed KEEP $W/fresh/cf \(written in the last 6 h\)\$" && grep -qxF "$W/fresh/cf" "$h/p1.txt" \
+    && has "$L2" "landed KEEP $W/fresh/cf \(written in the last 6 h\) \[kept at an earlier landing\]" \
+    && [ ! -e "$W/fresh/cf" ] && has "$L3" "landed REMOVED .*$W/fresh/cf .*\[kept at an earlier landing\]"; echo $?)"
+  A=$(sed -n 's/^archive: //p' "$W/arch/ca/ARCHIVED.txt" 2>/dev/null)
+  check l2-buildout "$( [ -f "$A" ] && has "$L1" "landed ARCHIVED .*$W/arch/ca -> .*build output left out: 1 folder\(s\)" \
+    && has "$W/arch/ca/ARCHIVED.txt" "^left out: build output, rebuild it after a restore: $W/arch/ca/target\$" \
+    && zstd -dc "$A" | tar -tf - > "$h/a.list" && ! grep -q '/arch/ca/target' "$h/a.list" \
+    && grep -q '/arch/ca/.lake/packages/dep/.git/HEAD$' "$h/a.list" && grep -q '/arch/ca/u$' "$h/a.list"; echo $?)"
+  check l2-noroom "$( has "$L2" "landed ALARM not enough free space to archive $W/big/cb: " \
+    && has "$L2" "landed KEEP $W/big/cb \(unsaved .*not enough free space to archive\)" && grep -qxF "$W/big/cb" "$h/p2.txt"; echo $?)"
+  check l2-recheck "$( [ -f "$W/big/cb/ARCHIVED.txt" ] && has "$L3" "landed ARCHIVED .*$W/big/cb -> .*\[kept at an earlier landing\]" \
+    && [ "$(cat "$P")" = "$(printf '%s\n%s' "$W/rels/cs" "$W/relu/cu")" ]; echo $?)"
+}
+
 # class 5 in its own scratch home, reading a scratch folder in place of /tmp: a /tmp git copy
 # goes only when everything in it is saved in ~/git; size never decides; a big entry is named
 # in one ALARM line
@@ -459,6 +545,7 @@ suite() {  # $1 spark-cleanup copy; sets pass/fail
   check f4-mode "$( [ -x "$h/workspace/wt-mode/a" ] && has "$o" 'class2 SKIP unsaved .*wt-mode' && ! has "$o" 'class2 REMOVED .*wt-mode'; echo $?)"
   check f5-mktemp "$mk_ok"
   landed_cases "$s"
+  landed2_cases "$s"
   class5_cases "$s"
 }
 
@@ -497,7 +584,7 @@ for spec in \
   'no-mode-check|s/\{ echo "skip-worktree or assume-unchanged file executable bit differs from the saved copy \(\$path\)"; return 0; \}/true/' \
   'mktemp-continue|s/  \[ -n "\$LANDED" \] && exit 0\n  exit 1\nfi/fi/' \
   'landed-idle|s/if ! idle_outside_git "\$r" \$\(\(LANDED_IDLE_H\*60\)\); then/if false; then/' \
-  'landed-inuse|s/if in_use "\$r"; then lkeep/if false; then lkeep/' \
+  'landed-inuse|s/if in_use "\$r"; then lwait/if false; then lwait/' \
   'landed-claim|s/if claimed "\$r" "\$TMPD\/claims"; then/if false; then/' \
   'claims-board-only|s/ "\$\{SPARK_CLEANUP_CLAIMS:-\$H\/handoffs\/hive\/CLAIMS\.md\}"//' \
   'claim-exact-only|s/    case "\$1\/" in "\$p"\/\*\) return 0 ;; esac\n/    [ "\$1" = "\$p" ] \&\& return 0\n/' \
@@ -510,7 +597,16 @@ for spec in \
   'c5-cap-back|s/(\n    remove_dir 5 )/\n    sz=\$(size_of "\$d"); [ "\$sz" -gt "\${SPARK_CLEANUP_TMP_MAX:-5368709120}" ] \&\& { log "class5 SKIP over-cap \$d"; continue; }$1/' \
   'no-big-alarm|s/\n\[ \$\{#BIG\[@\]\} -gt 0 \] && log/\n[ 0 = 1 ] \&\& log/' \
   'index-write|s/export GIT_OPTIONAL_LOCKS=0\n//' \
-  'no-board|s/      "\$\(date -u \+%FT%H:%MZ\)" "\$n" "\$\(human "\$bytes"\)" "\$LOG" >> "\$board"/      "x" "\$n" "x" "x" >\/dev\/null/' ; do
+  'no-board|s/      "\$\(date -u \+%FT%H:%MZ\)" "\$n" "\$\(human "\$bytes"\)" "\$LOG" >> "\$board"/      "x" "\$n" "x" "x" >\/dev\/null/' \
+  'root-claim-used|s/if \[ "\$root" = 1 \]; then printf/if false; then printf/' \
+  'release-ignored|s/gone = rn\[j\] > cn\[i\]/gone = 0/' \
+  'release-before-claim|s/gone = rn\[j\] > cn\[i\]/gone = 1/' \
+  'release-any-lane|s/if \(cl\[i\] == "" \|\| rl\[j\] != cl\[i\]\) continue/if (cl[i] == "") continue/' \
+  'pending-unread|s/grep -qxF -- "\$r" "\$pending"; then via=/false; then via=/' \
+  'build-in-archive|s/(build_output\(\) \{  # \$1 copy\n)/$1  return 0\n/' \
+  'no-room-check|s/ \|\| \[ "\$room" -lt "\$need" \]; then/; then/' \
+  'claim-file-missing|s/if \[ -r "\$f" \]; then files\+=/if true; then files+=/' \
+  'alarm-reads-as-claim|s/to all: a claim line names/to all: a CLAIM line names/' ; do
   name=${spec%%|*}; expr=${spec#*|}
   mt=$((mt+1)); mutate "$name" "$expr" && mc=$((mc+1))
 done

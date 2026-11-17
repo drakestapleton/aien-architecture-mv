@@ -3,7 +3,8 @@
 # root filesystem is short of space or filling fast. Never deletes anything. Change-driven, not clock-driven:
 # every landing on a ~/git store repository runs it (the store hook tools/ops/store-post-update, detached, after
 # spark-cleanup --landed), aien-bays finish runs it each time a bay finishes, and any lander or gate runner may
-# run it at start (`disk-alarm --quiet`).
+# run it at start (`disk-alarm --quiet`). Nothing else runs it: while no landing, bay finish or manual run
+# happens, the disk is not checked at all, so a quiet board is not proof that the disk is fine.
 #
 # Linear: the first ALARM, each further 25 GB fall, and the "cleared" line are also posted as a comment on
 # DISK_ALARM_LINEAR_ISSUE (default DRA-521, "Free space on the Spark disk"), by one direct commentCreate call
@@ -41,6 +42,9 @@ REPEAT=${DISK_ALARM_REPEAT_S:-1800}
 BOARD=${DISK_ALARM_BOARD:-$H/handoffs/BOARD.md}
 STATE=${DISK_ALARM_STATE:-$H/.local/state/disk-alarm}
 PROC=${DISK_ALARM_PROC:-/proc}
+# other users' /proc/<pid>/io (root services, containers) is readable only through sudo; without it those
+# writers are counted as unreadable, never as "wrote nothing"
+SUDO=''; [ -z "${DISK_ALARM_PROC:-}" ] && sudo -n true 2>/dev/null && SUDO='sudo -n'
 LINEAR_ISSUE=${DISK_ALARM_LINEAR_ISSUE:-DRA-521}
 QUIET=0; [ "${1:-}" = --quiet ] && QUIET=1
 LINEAR_CMD=${DISK_ALARM_LINEAR_CMD:-$(readlink -f "$0") --linear-comment}
@@ -76,7 +80,8 @@ if [ -n "${DISK_ALARM_DF:-}" ]; then free=$(eval "$DISK_ALARM_DF"); else free=$(
 # sample: free bytes, and every process's cumulative write_bytes (pid<TAB>bytes)
 S="$STATE/samples.tsv"; touch "$S"
 printf '%s\t%s\n' "$now" "$free" >> "$S"
-grep -sH '^write_bytes' "$PROC"/[0-9]*/io | sed -E "s#^$PROC/([0-9]+)/io:write_bytes:[[:space:]]*#\1\t#" > "$STATE/io/$now.tsv"
+$SUDO grep -sH '^write_bytes' "$PROC"/[0-9]*/io | sed -E "s#^$PROC/([0-9]+)/io:write_bytes:[[:space:]]*#\1\t#" > "$STATE/io/$now.tsv"
+unread=$(( $(printf '%s\n' "$PROC"/[0-9]* | grep -c '/[0-9][0-9]*$') - $(wc -l < "$STATE/io/$now.tsv") )); [ "$unread" -lt 0 ] && unread=0
 # keep 3 hours of samples and their io snapshots
 awk -F'\t' -v c=$((now - 10800)) '$1 >= c' "$S" > "$S.tmp" && mv "$S.tmp" "$S"
 for f in "$STATE"/io/*.tsv; do t=${f##*/}; t=${t%.tsv}; [ "$t" -lt $((now - 10800)) ] && rm -f "$f"; done
@@ -146,13 +151,14 @@ if [ -n "$base" ] && [ -f "$base" ]; then
   top=$(awk -F'\t' 'NR==FNR {a[$1]=$2; next} ($1 in a) && $2 > a[$1] {print $1 "\t" $2 - a[$1]}' "$base" "$STATE/io/$now.tsv" |
     sort -t$'\t' -k2,2nr | head -n 200 |
     while IFS=$'\t' read -r pid d; do
-      cwd=$(readlink -f "$PROC/$pid/cwd" 2>/dev/null | tr -d '\n' | tr -c 'A-Za-z0-9._/+-' '?' | cut -c1-160)
+      cwd=$($SUDO readlink -f "$PROC/$pid/cwd" 2>/dev/null | tr -d '\n' | tr -c 'A-Za-z0-9._/+-' '?' | cut -c1-160)
       printf '%s\t%s\t%s\n' "${cwd:-exited}" "$d" "$(tr -d '\n' < "$PROC/$pid/comm" 2>/dev/null | tr -c 'A-Za-z0-9._+-' '?' | cut -c1-32)"
     done |
     awk -F'\t' '{s[$1]+=$2; if (!($1 in c) || $2 > m[$1]) {c[$1]=$3; m[$1]=$2}} END {for (k in s) printf "%d\t%s\t%s\n", s[k], k, c[k]}' |
     sort -t$'\t' -k1,1nr | head -n 3 |
     awk -F'\t' -v h="$H" '{p=$2; if (index(p, h "/") == 1) p="~" substr(p, length(h)+1); printf "%s%s +%.1f GB written (%s)", (NR>1 ? "; " : ""), p, $1/1e9, $3}')
-  top="${top:-no process wrote} (since $(stamp "$since"))"
+  [ "$unread" -gt 0 ] && top="${top:+$top; }$unread process(es) whose writes could not be read"
+  top="${top:-no readable process wrote} (since $(stamp "$since"))"
 fi
 # bytes held by deleted-but-open files (space df counts as used that no directory shows)
 held=$(find "$PROC"/[0-9]*/fd -maxdepth 1 -type l -lname '*(deleted)' -printf '%p\n' 2>/dev/null |

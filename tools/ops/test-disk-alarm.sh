@@ -76,5 +76,19 @@ rm -rf "$T/state" "$T/BOARD.md"; mkdir -p "$T/state"
 r=$(DISK_ALARM_MIN_GB=200 run 290000000000 30000)
 [ "$r" = 0 ] && [ ! -s "$T/BOARD.md" ] && ok "MIN_GB setting respected" || bad "MIN_GB setting (exit $r)"
 
+# 11. a process whose io cannot be read (pid 100's io has no write_bytes line; pid 102's is mode 000) is counted
+#     in the line, not taken as writing nothing; negative control: with every io readable and nobody writing,
+#     the line says no readable process wrote
+rm -rf "$T/state" "$T/BOARD.md"; mkdir -p "$T/state" "$T/proc/102"
+printf 'write_bytes: 7\n' > "$T/proc/102/io"; chmod 000 "$T/proc/102/io"; printf 'root-svc\n' > "$T/proc/102/comm"
+run 290000000000 40000 >/dev/null; r=$(run 290000000000 42000)
+[ "$r" = 3 ] && tail -n 1 "$T/BOARD.md" | grep -qE 'Top writers by real directory: [0-9]+ process\(es\) whose writes could not be read' &&
+  ! grep -q 'no readable process wrote\|no process wrote' "$T/BOARD.md" &&
+  ok "unreadable process io counted, not taken as no writes" || bad "unreadable io (exit $r): $(tail -n 1 "$T/BOARD.md" | cut -c1-200)"
+rm -rf "$T/proc/102" "$T/state" "$T/BOARD.md"; mkdir -p "$T/state"; printf 'write_bytes: 0\n' > "$T/proc/100/io"
+run 290000000000 50000 >/dev/null; r=$(run 290000000000 52000)
+[ "$r" = 3 ] && tail -n 1 "$T/BOARD.md" | grep -q 'Top writers by real directory: no readable process wrote (since' &&
+  ok "every io readable, nobody wrote: says so (negative control)" || bad "readable io control (exit $r): $(tail -n 1 "$T/BOARD.md" | cut -c1-200)"
+
 echo "disk-alarm tests: $fails failed"
 [ "$fails" = 0 ]
