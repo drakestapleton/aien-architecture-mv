@@ -10,25 +10,30 @@ ok() { echo "PASS $1"; }
 bad() { echo "FAIL $1"; fails=$((fails + 1)); }
 
 mkdir -p "$T/proc/100" "$T/state"
-: > "$T/proc/100/io"; echo bash > "$T/proc/100/comm"; ln -s "$T" "$T/proc/100/cwd"
-printf '#!/bin/sh\nprintf "%%s\\n" "$1" >> "%s/linear.calls"\n' "$T" > "$T/fake-linear"
-chmod +x "$T/fake-linear"
+: > "$T/proc/100/io"; printf 'ba`sh;$(x)\n' > "$T/proc/100/comm"; ln -s "$T" "$T/proc/100/cwd"
+# the fake route: one line "ISSUE TEXT" per post, prints a comment id (a failing route: tests 7 and 8)
+printf '#!/bin/sh\nprintf "%%s %%s\\n" "$1" "$2" >> "%s/linear.calls"\necho "fake-id-$$"\n' "$T" > "$T/fake-linear"
+printf '#!/bin/sh\necho "HTTP 503 from Linear" >&2\nexit 1\n' > "$T/fail-linear"
+chmod +x "$T/fake-linear" "$T/fail-linear"
 export DISK_ALARM_PROC="$T/proc" DISK_ALARM_BOARD="$T/BOARD.md" DISK_ALARM_STATE="$T/state" \
   DISK_ALARM_LINEAR_CMD="$T/fake-linear" DISK_ALARM_LINEAR_ISSUE=DRA-TEST
 run() { DISK_ALARM_DF="echo $1" DISK_ALARM_NOW=$2 "$here/disk-alarm" --quiet; echo $?; }
-calls() { sleep 0.5; [ -f "$T/linear.calls" ] && wc -l < "$T/linear.calls" || echo 0; }
+calls() { [ -f "$T/linear.calls" ] && wc -l < "$T/linear.calls" || echo 0; }
 
 # 1. plenty free: quiet, nothing posted anywhere
 r=$(run 900000000000 1000)
 [ "$r" = 0 ] && [ ! -s "$T/BOARD.md" ] && [ "$(calls)" = 0 ] && ok "quiet above 300 GB" || bad "quiet above 300 GB (exit $r)"
 
-# 2. default floor is 300 GB: 290 GB free alarms, board line and one Linear post naming the issue
+# 2. default floor is 300 GB: 290 GB free alarms, board line and one confirmed Linear post naming the issue
+mkdir -p "$T/proc/101"; printf 'write_bytes: 0\n' > "$T/proc/101/io"; printf 'ev`il$(id);\n' > "$T/proc/101/comm"
+ln -s "$T" "$T/proc/101/cwd"
 r=$(run 290000000000 2000)
 [ "$r" = 3 ] && grep -q '\*\*ALARM disk\*\* / free 290.0 GB' "$T/BOARD.md" && [ "$(calls)" = 1 ] &&
-  grep -q 'Linear issue DRA-TEST' "$T/linear.calls" && grep -q 'ALARM disk: / free 290.0 GB' "$T/linear.calls" &&
-  ok "alarm below 300 GB reaches board and Linear" || bad "alarm below 300 GB (exit $r, calls $(calls))"
+  grep -q '^DRA-TEST .*ALARM disk: / free 290.0 GB' "$T/linear.calls" && grep -q 'posted on DRA-TEST, comment fake-id-' "$T/state/linear.log" &&
+  [ -f "$T/state/last-linear" ] && ok "alarm below 300 GB reaches board and Linear, comment id recorded" || bad "alarm below 300 GB (exit $r, calls $(calls))"
 
-# 3. repeat after REPEAT_S with a small further fall: board repeats, Linear does not
+# 3. repeat after REPEAT_S with a small further fall: board repeats, Linear does not (pid 101 now wrote 5 GB)
+printf 'write_bytes: 5000000000\n' > "$T/proc/101/io"
 r=$(run 285000000000 4000)
 [ "$r" = 3 ] && [ "$(grep -c 'ALARM disk' "$T/BOARD.md")" = 2 ] && [ "$(calls)" = 1 ] &&
   ok "repeat alarm not reposted to Linear" || bad "repeat alarm (exit $r, calls $(calls))"
@@ -47,12 +52,26 @@ r=$(run 900000000000 9000)
 r2=$(run 900000000000 9100)
 [ "$r" = 0 ] && [ "$r2" = 0 ] && [ "$(grep -c 'cleared' "$T/BOARD.md")" = 1 ] && [ "$(calls)" = 3 ] &&
   grep -q 'cleared' "$T/linear.calls" && ok "cleared once on board and Linear" || bad "cleared (exit $r/$r2, calls $(calls))"
+# 7. a failing Linear route: exit status and board line unchanged, one board ALARM naming the failure,
+#    the post kept as pending and nothing recorded as posted; a second failing check does not repeat the line
+rm -f "$T/state/last-alarm"
+r=$(DISK_ALARM_LINEAR_CMD="$T/fail-linear"; export DISK_ALARM_LINEAR_CMD; run 100000000000 20000)
+r2=$(DISK_ALARM_LINEAR_CMD="$T/fail-linear"; export DISK_ALARM_LINEAR_CMD; run 99000000000 22000)
+[ "$r" = 3 ] && [ "$r2" = 3 ] && grep -q 'free 100.0 GB' "$T/BOARD.md" &&
+  [ "$(grep -c 'ALARM disk-alarm\*\*: the Linear comment on DRA-TEST failed (HTTP 503 from Linear)' "$T/BOARD.md")" = 1 ] &&
+  [ -f "$T/state/linear-pending" ] && [ ! -f "$T/state/last-linear" ] && [ "$(calls)" = 3 ] &&
+  ok "Linear failure: board ALARM once, post kept, not recorded" || bad "Linear failure (exit $r/$r2, calls $(calls))"
 
-# 7. a failing Linear route never changes the exit status or the board line
-r=$(DISK_ALARM_LINEAR_CMD=false; export DISK_ALARM_LINEAR_CMD; run 100000000000 20000)
-[ "$r" = 3 ] && grep -q 'free 100.0 GB' "$T/BOARD.md" && ok "Linear failure does not change the check" || bad "Linear failure (exit $r)"
+# 8. the next check with a working route sends the pending post first, then records it
+r=$(run 99000000000 22100)
+[ "$r" = 3 ] && [ ! -f "$T/state/linear-pending" ] && [ -f "$T/state/last-linear" ] && [ "$(calls)" = 4 ] &&
+  tail -n 1 "$T/linear.calls" | grep -q 'free 99.0 GB' && ok "pending post sent at the next check" || bad "pending retry (exit $r, calls $(calls))"
 
-# 8. negative control: the floor is a setting, 290 GB with MIN_GB=200 is quiet
+# 9. names from /proc reach board and Linear only as a fixed character set (no backquote, $, ; or parentheses)
+! grep -q '[`$]' "$T/linear.calls" && ! grep -q 'ev`il' "$T/BOARD.md" && grep -q '(ev?il??id??)' "$T/BOARD.md" &&
+  ok "process names cut to a fixed character set" || bad "process names not sanitised: $(grep -o 'written ([^)]*' "$T/BOARD.md" | tail -1)"
+
+# 10. negative control: the floor is a setting, 290 GB with MIN_GB=200 is quiet
 rm -rf "$T/state" "$T/BOARD.md"; mkdir -p "$T/state"
 r=$(DISK_ALARM_MIN_GB=200 run 290000000000 30000)
 [ "$r" = 0 ] && [ ! -s "$T/BOARD.md" ] && ok "MIN_GB setting respected" || bad "MIN_GB setting (exit $r)"

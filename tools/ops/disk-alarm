@@ -6,10 +6,13 @@
 # run it at start (`disk-alarm --quiet`).
 #
 # Linear: the first ALARM, each further 25 GB fall, and the "cleared" line are also posted as a comment on
-# DISK_ALARM_LINEAR_ISSUE (default DRA-521, "Free space on the Spark disk"), by a detached
-# `aien-pick run` (an agent with the Linear tools; its output goes to $STATE/linear.log). Repeats held back
-# on the board are not posted. DISK_ALARM_LINEAR_CMD replaces `aien-pick run` (tests); set it to `true` to
-# turn the Linear route off.
+# DISK_ALARM_LINEAR_ISSUE (default DRA-521, "Free space on the Spark disk"), by one direct commentCreate call
+# to Linear's API (`disk-alarm --linear-comment ISSUE TEXT`, below; the key comes from atlas-vault for that
+# process only). A post counts only when Linear returns the new comment's id ($STATE/linear.log). A failed
+# post is kept in $STATE/linear-pending, said once on the board as an ALARM, and sent again at the next check.
+# Repeats held back on the board are not posted. DISK_ALARM_LINEAR_CMD replaces the route (tests): it is run
+# as `CMD ISSUE TEXT` and must print the comment id; set it to `echo off` to turn the Linear route off.
+# Process names and directories in the text are cut to a fixed character set and length.
 #
 # What it measures (the whole filesystem, never a list of directories):
 #   free  = df free bytes of the filesystem holding DISK_ALARM_FS (default /)
@@ -39,9 +42,30 @@ BOARD=${DISK_ALARM_BOARD:-$H/handoffs/BOARD.md}
 STATE=${DISK_ALARM_STATE:-$H/.local/state/disk-alarm}
 PROC=${DISK_ALARM_PROC:-/proc}
 LINEAR_ISSUE=${DISK_ALARM_LINEAR_ISSUE:-DRA-521}
-LINEAR_CMD=${DISK_ALARM_LINEAR_CMD:-aien-pick run}
 QUIET=0; [ "${1:-}" = --quiet ] && QUIET=1
+LINEAR_CMD=${DISK_ALARM_LINEAR_CMD:-$(readlink -f "$0") --linear-comment}
 mkdir -p "$STATE/io" || exit 2
+
+# --linear-comment ISSUE TEXT: the default Linear route. One commentCreate call; prints the new comment's id
+# and exits 0, or says why on stderr and exits 1. The key is read from atlas-vault into this process only,
+# never into argv or a file. Host binaries: curl (Omega has no TLS client yet), jq, atlas-vault.
+if [ "${1:-}" = --linear-comment ]; then
+  [ $# = 3 ] || { echo "usage: disk-alarm --linear-comment ISSUE TEXT" >&2; exit 2; }
+  if [ -z "${LINEAR_API_KEY:-}" ]; then
+    [ -z "${DISK_ALARM_VAULTED:-}" ] || { echo "atlas-vault gave no LINEAR_API_KEY" >&2; exit 1; }
+    command -v atlas-vault >/dev/null || { echo "atlas-vault not found" >&2; exit 1; }
+    export DISK_ALARM_VAULTED=1
+    exec atlas-vault run LINEAR_API_KEY -- "$(readlink -f "$0")" "$@"
+  fi
+  out=$(jq -nc --arg i "$2" --arg b "$3" \
+      '{query:"mutation($i:String!,$b:String!){commentCreate(input:{issueId:$i,body:$b}){success comment{id}}}",variables:{i:$i,b:$b}}' |
+    curl -q -sS --noproxy '*' --max-time 60 -H 'Content-Type: application/json' \
+      -H @<(printf 'Authorization: %s\n' "$LINEAR_API_KEY") --data-binary @- https://api.linear.app/graphql 2>&1) ||
+    { echo "curl: $out" >&2; exit 1; }
+  id=$(jq -r 'if .data.commentCreate.success == true then .data.commentCreate.comment.id // empty else empty end' <<<"$out" 2>/dev/null)
+  [ -n "$id" ] || { echo "Linear refused: $(jq -c '.errors // .' <<<"$out" 2>/dev/null | cut -c1-300)" >&2; exit 1; }
+  echo "$id"; exit 0
+fi
 exec 9>"$STATE/run.lock"
 flock -n 9 || exit 0   # another check is running at this moment; its result stands
 
@@ -71,20 +95,32 @@ fi
 
 board_line() { ( flock -w 30 8 || exit 1; printf '%s\n' "$1" >> "$BOARD" ) 8>>"$BOARD.lock"; }
 stamp() { date -u -d "@$1" +%FT%TZ; }
-# Linear: detached, its own log, never blocks or fails the check
-L="$STATE/last-linear"
-linear_post() {
-  local task="Post exactly the following text, unchanged, as one new comment on Linear issue ${LINEAR_ISSUE}, then reply with the comment's URL. Do nothing else. Text: $1"
-  ( cd "$STATE" && setsid nohup $LINEAR_CMD "$task" >> "$STATE/linear.log" 2>&1 < /dev/null & ) 2>/dev/null
-  return 0
+# Linear: a post counts only when the route prints the new comment's id. Success records it (alarm: time and
+# free in last-linear; cleared: last-linear dropped) and drops any pending post. Failure keeps the post in
+# linear-pending for the next check and says so once on the board. Never changes the exit status.
+L="$STATE/last-linear"; P="$STATE/linear-pending"
+linear_send() {  # $1 alarm|cleared, $2 text
+  local id err
+  if id=$(timeout 180 $LINEAR_CMD "$LINEAR_ISSUE" "$2" 2>"$STATE/linear.err" </dev/null) && [[ "$id" =~ ^[A-Za-z0-9-]+$ ]]; then
+    printf '%s %s posted on %s, comment %s\n' "$(stamp "$now")" "$1" "$LINEAR_ISSUE" "$id" >> "$STATE/linear.log"
+    if [ "$1" = alarm ]; then printf '%s %s\n' "$now" "$free" > "$L"; else rm -f "$L"; fi
+    rm -f "$P"; return 0
+  fi
+  err=$(tr '\n' ' ' < "$STATE/linear.err" | tr -c 'A-Za-z0-9 ._:/=()-' ' ' | head -c 200 | sed 's/ *$//')
+  printf '%s %s FAILED on %s: %s\n' "$(stamp "$now")" "$1" "$LINEAR_ISSUE" "${err:-no comment id}" >> "$STATE/linear.log"
+  [ -f "$P" ] || board_line "- $(stamp "$now") **ALARM disk-alarm**: the Linear comment on $LINEAR_ISSUE failed (${err:-no comment id}); kept in $P and sent again at the next check"
+  printf '%s\n%s\n' "$1" "$2" > "$P"
+  return 1
 }
+# a post that failed at an earlier check goes first
+if [ -f "$P" ]; then pk=$(head -n 1 "$P"); linear_send "$pk" "$(tail -n +2 "$P")"; fi
 
 A="$STATE/last-alarm"
 if [ -z "$why" ]; then
   if [ -f "$A" ]; then
     line="- $(stamp "$now") disk-alarm: cleared, / free ${gb} GB, falling ${rate:-unmeasured} GB/h (thresholds ${MIN_GB} GB, ${MAX_RATE} GB/h)"
     board_line "$line"
-    [ -f "$L" ] && { linear_post "${line#- }"; rm -f "$L"; }
+    { [ -f "$L" ] || [ -f "$P" ]; } && linear_send cleared "${line#- }"
     rm -f "$A"
   fi
   [ "$QUIET" = 1 ] || echo "disk-alarm: quiet, free ${gb} GB, falling ${rate:-unmeasured} GB/h"
@@ -110,8 +146,8 @@ if [ -n "$base" ] && [ -f "$base" ]; then
   top=$(awk -F'\t' 'NR==FNR {a[$1]=$2; next} ($1 in a) && $2 > a[$1] {print $1 "\t" $2 - a[$1]}' "$base" "$STATE/io/$now.tsv" |
     sort -t$'\t' -k2,2nr | head -n 200 |
     while IFS=$'\t' read -r pid d; do
-      cwd=$(readlink -f "$PROC/$pid/cwd" 2>/dev/null) || cwd='(exited)'
-      printf '%s\t%s\t%s\n' "$cwd" "$d" "$(cat "$PROC/$pid/comm" 2>/dev/null)"
+      cwd=$(readlink -f "$PROC/$pid/cwd" 2>/dev/null | tr -d '\n' | tr -c 'A-Za-z0-9._/+-' '?' | cut -c1-160)
+      printf '%s\t%s\t%s\n' "${cwd:-exited}" "$d" "$(tr -d '\n' < "$PROC/$pid/comm" 2>/dev/null | tr -c 'A-Za-z0-9._+-' '?' | cut -c1-32)"
     done |
     awk -F'\t' '{s[$1]+=$2; if (!($1 in c) || $2 > m[$1]) {c[$1]=$3; m[$1]=$2}} END {for (k in s) printf "%d\t%s\t%s\n", s[k], k, c[k]}' |
     sort -t$'\t' -k1,1nr | head -n 3 |
@@ -127,9 +163,6 @@ board_line "- ${line/ALARM disk:/**ALARM disk**}"
 printf '%s %s\n' "$now" "$free" > "$A"
 # Linear: the first alarm of an episode, then each further 25 GB fall
 lf=''; [ -f "$L" ] && read -r _ lf < "$L"
-if [ -z "$lf" ] || [ $((lf - free)) -ge 25000000000 ]; then
-  linear_post "$line"
-  printf '%s %s\n' "$now" "$free" > "$L"
-fi
+[ -z "$lf" ] || [ $((lf - free)) -ge 25000000000 ] && linear_send alarm "$line"
 [ "$QUIET" = 1 ] || echo "disk-alarm: ALARM written to $BOARD: $why"
 exit 3

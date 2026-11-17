@@ -61,12 +61,15 @@
 #   f4-mode     an assume-unchanged file whose only change is the executable bit: worktree kept
 #   f5-mktemp   TMPDIR that does not exist: loud ALARM, non-zero exit, nothing removed
 #   --landed lrepo (own scratch home, ~/git/lrepo.git landed):
-#   ld-exit     exit 0, nothing on stdout or stderr, one summary line: removed 3, archived 2, kept 5
+#   ld-exit     exit 0, nothing on stdout or stderr, one summary line: removed 4, archived 2, kept 7
 #   ld-saved    a saved idle clone (an old CLAIM 30 days back, a fresh FETCH_HEAD) is removed
 #   ld-root     a saved clone with no remote, matched by its root commit, is removed
 #   ld-recent   a saved clone with a file written now is kept (written in the last 6 h)
 #   ld-open     a saved clone that is a running process's working folder is kept (open)
 #   ld-claim    a clone named by a current CLAIM line on the board is kept
+#   ld-claims   a clone inside ~/work/lane2, a folder claimed in ~/handoffs/hive/CLAIMS.md ("~/work/lane2:"), is kept
+#   ld-dashmain the dashed main clone ~/workspace/ld-main (store ld-main-mv.git, same root commit) is kept,
+#               while the dashed task copy ~/workspace/task-lrepo is removed
 #   ld-unsaved-recent a clone with a commit not in ~/git, written 1 day ago, is kept, not archived
 #   ld-other    a clone of another repository is not looked at
 #   ld-main     the main clone ~/workspace/lrepo is kept
@@ -258,7 +261,7 @@ has() { grep -qE -- "$2" "$1"; }
 landed_cases() {  # $1 spark-cleanup copy
   local s=$1 h n uc wc lrc sp i A
   h=$(mktemp -d "$top/l.XXXX")
-  mkdir -p "$h/git" "$h/workspace" "$h/work/lane" "$h/handoffs/land" "$h/elsewhere"
+  mkdir -p "$h/git" "$h/workspace" "$h/work/lane" "$h/work/lane2" "$h/handoffs/land" "$h/handoffs/hive" "$h/elsewhere"
   git init -q -b main "$h/workspace/lrepo"
   echo a > "$h/workspace/lrepo/a"; git -C "$h/workspace/lrepo" add a; git -C "$h/workspace/lrepo" commit -qm a
   git clone -q --bare "$h/workspace/lrepo" "$h/git/lrepo.git"
@@ -270,6 +273,11 @@ landed_cases() {  # $1 spark-cleanup copy
   for n in saved-idle saved-noremote saved-recent saved-open claimed unsaved-old unsaved-recent; do
     git clone -q "$h/git/lrepo.git" "$h/work/lane/$n"
   done
+  git clone -q "$h/git/lrepo.git" "$h/work/lane2/child"
+  git clone -q --bare "$h/git/lrepo.git" "$h/git/ld-main-mv.git"
+  git clone -q "$h/git/ld-main-mv.git" "$h/workspace/ld-main"
+  git clone -q "$h/git/lrepo.git" "$h/workspace/task-lrepo"
+  printf '%s | CLAIM | lane-y | isolated ~/work/lane2: host only\n' "$(date -u +%FT%H:%M:%SZ)" > "$h/handoffs/hive/CLAIMS.md"
   git -C "$h/work/lane/saved-noremote" remote remove origin
   echo u > "$h/work/lane/unsaved-old/u"; git -C "$h/work/lane/unsaved-old" add u; git -C "$h/work/lane/unsaved-old" commit -qm u
   uc=$(git -C "$h/work/lane/unsaved-old" rev-parse HEAD); echo mine > "$h/work/lane/unsaved-old/notes.txt"
@@ -298,12 +306,15 @@ landed_cases() {  # $1 spark-cleanup copy
     SPARK_CLEANUP_TEST_INUSE_FILE=$h/inuse bash "$s" --landed '../x' > "$h/out2.txt" 2>&1
   cat "$h"/.local/state/spark-cleanup/*.log > "$h/l2.txt"
   local L="$h/l1.txt" W="$h/work/lane"
-  check ld-exit "$( [ "$lrc" = 0 ] && [ ! -s "$h/out.txt" ] && has "$L" "landed lrepo done: removed 3, archived 2, kept 5"; echo $?)"
+  check ld-exit "$( [ "$lrc" = 0 ] && [ ! -s "$h/out.txt" ] && has "$L" "landed lrepo done: removed 4, archived 2, kept 7"; echo $?)"
   check ld-saved "$( [ ! -e "$W/saved-idle" ] && has "$L" "landed REMOVED .*$W/saved-idle "; echo $?)"
   check ld-root "$( [ ! -e "$W/saved-noremote" ] && has "$L" "landed REMOVED .*$W/saved-noremote "; echo $?)"
   check ld-recent "$( [ -f "$W/saved-recent/a" ] && has "$L" "landed KEEP $W/saved-recent \(written in the last 6 h\)"; echo $?)"
   check ld-open "$( [ -f "$W/saved-open/a" ] && has "$L" "landed KEEP $W/saved-open \(open by a running process\)"; echo $?)"
   check ld-claim "$( [ -f "$W/claimed/a" ] && has "$L" "landed KEEP $W/claimed \(claimed"; echo $?)"
+  check ld-claims "$( [ -f "$h/work/lane2/child/a" ] && has "$L" "landed KEEP $h/work/lane2/child \(claimed"; echo $?)"
+  check ld-dashmain "$( [ -f "$h/workspace/ld-main/a" ] && has "$L" "landed KEEP $h/workspace/ld-main \(main clone\)" \
+    && [ ! -e "$h/workspace/task-lrepo" ] && has "$L" "landed REMOVED .*$h/workspace/task-lrepo "; echo $?)"
   check ld-unsaved-recent "$( [ -d "$W/unsaved-recent/.git" ] && [ ! -e "$W/unsaved-recent/ARCHIVED.txt" ] && has "$L" "landed KEEP $W/unsaved-recent \(unsaved"; echo $?)"
   check ld-other "$( [ -f "$W/other/o" ] && ! has "$L" "$W/other"; echo $?)"
   check ld-main "$( [ -d "$h/workspace/lrepo/.git" ] && has "$L" "landed KEEP $h/workspace/lrepo \(main clone\)"; echo $?)"
@@ -488,6 +499,9 @@ for spec in \
   'landed-idle|s/if ! idle_outside_git "\$r" \$\(\(LANDED_IDLE_H\*60\)\); then/if false; then/' \
   'landed-inuse|s/if in_use "\$r"; then lkeep/if false; then lkeep/' \
   'landed-claim|s/if claimed "\$r" "\$TMPD\/claims"; then/if false; then/' \
+  'claims-board-only|s/ "\$\{SPARK_CLEANUP_CLAIMS:-\$H\/handoffs\/hive\/CLAIMS\.md\}"//' \
+  'claim-exact-only|s/    case "\$1\/" in "\$p"\/\*\) return 0 ;; esac\n/    [ "\$1" = "\$p" ] \&\& return 0\n/' \
+  'main-dash-name|s/  \[ -n "\$\{STORE_NAME\[\$n\]:-\}" \] && return 0\n//' \
   'landed-unsaved-removed|s/if \[ "\$bad" = 0 \] && \[ -z "\$nest" \] && \[ -z "\$uns" \]; then landed_remove/if true; then landed_remove/' \
   'landed-archive-recent|s/if ! idle_outside_git "\$r" \$\(\(LANDED_ARCHIVE_D\*1440\)\); then/if false; then/' \
   'landed-no-bundle|s/    if \[ -n "\$head" \] && ! in_git_store "\$head"; then/    if false; then/' \

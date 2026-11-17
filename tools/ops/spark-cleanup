@@ -60,12 +60,20 @@
 #      its last post (~/.local/state/spark-cleanup/class8-posted).
 #
 # Landing mode (spark-cleanup --landed REPO, REPO = a store name such as omega-mv):
-#   run detached by a line in ~/git/<REPO>.git/hooks/post-update after every
-#   landing. It looks at the class 8 copies (~/workspace, ~/work, ~/.claude/jobs;
-#   never /tmp or ~/handoffs) whose remote URL names REPO or whose HEAD has a root
-#   commit of the store's REPO.git. Main clones, protected or claimed copies (a
-#   CLAIM line on the board naming the path in the last SPARK_CLEANUP_CLAIM_DAYS
-#   days, default 14, or a locked worktree), and copies with anything open stay.
+#   run detached by store-post-update, the post-update hook every ~/git store
+#   repository gets through core.hooksPath, after every landing. It looks at the
+#   class 8 copies (~/workspace, ~/work, ~/.claude/jobs; never /tmp or ~/handoffs)
+#   whose remote URL names REPO or whose HEAD has a root commit of the store's
+#   REPO.git. These stay:
+#     main clones: a folder directly in ~/workspace with a real .git folder whose
+#       name has no '-' or is a repository's name (a store <name>.git or
+#       <name>-mv.git, or the last part of one of its remote URLs)
+#     protected copies
+#     claimed copies: a CLAIM line of the last SPARK_CLEANUP_CLAIM_DAYS days
+#       (default 14) on the board (SPARK_CLEANUP_BOARD) or in
+#       ~/handoffs/hive/CLAIMS.md (SPARK_CLEANUP_CLAIMS) names the copy, a folder
+#       above it or a path inside it; or a locked worktree
+#     copies a running process has open (looked at again just before removal)
 #     saved (class 8 leftover: every ref, nested and submodule commit in ~/git,
 #     nothing unsaved) and no file outside .git written for
 #     SPARK_CLEANUP_LANDED_IDLE_H hours (default 6): removed (git worktree
@@ -73,7 +81,7 @@
 #     freed are logged
 #     unsaved, idle SPARK_CLEANUP_LANDED_ARCHIVE_D days (default 3): archived to
 #     SPARK_CLEANUP_ARCHIVE (default ~/archive/agent-work)/<name>.tar.zst, the
-#     entry count checked, then removed and replaced by <copy>/ARCHIVED.txt with
+#     entry count and contents (tar -d) checked against the copy, then removed and replaced by <copy>/ARCHIVED.txt with
 #     the restore command. A linked worktree's archive also holds its record in
 #     the main clone and a bundle of a HEAD not in ~/git
 #     anything else stays, with the reason in the log.
@@ -212,7 +220,18 @@ big_note() { [ "${2:-0}" -gt "$BIG_ALARM" ] && BIG+=("$1 $(human "$2") ($3)"); r
 # --apply run's marks, so it cannot block, or raise a false alarm about, the daily scan
 if [ "$CLASSES" = 8 ]; then exec 9>"$STATE/class8$( [ $APPLY = 1 ] || echo -dry).lock"; else exec 9>"$STATE/run.lock"; fi
 if [ -n "$LANDED" ]; then
-  flock 9   # a landing waits for the run before it: skipping would leave this landing's copies for the next one
+  # a landing waits for the run before it: skipping would leave this landing's copies for the next one.
+  # No cap on the wait (standing rule); a wait past SPARK_CLEANUP_LOCK_WAIT_MIN minutes (default 30) is
+  # named on the board once, then the wait goes on
+  if ! flock -n 9; then
+    _lw="${SPARK_CLEANUP_LOCK_WAIT_MIN:-30}"; [[ "$_lw" =~ ^[0-9]+$ ]] || _lw=30
+    echo "$(date +%FT%T) landed $LANDED: waiting for run.lock (another spark-cleanup run holds it)" >> "$LOG"
+    if ! flock -w $((_lw*60)) 9; then
+      echo "$(date +%FT%T) landed ALARM $LANDED: still waiting for run.lock after $_lw min" >> "$LOG"
+      printf '%s ALARM spark-cleanup to all: the cleanup for the landing of %s has waited %s min for run.lock (holder: %s); see %s.\n' "$(date -u +%FT%H:%MZ)" "$LANDED" "$_lw" "$(fuser "$STATE/run.lock" 2>/dev/null | tr -s ' ' | sed 's/^ //')" "$LOG" >> "${SPARK_CLEANUP_BOARD:-$H/handoffs/BOARD.md}"
+      flock 9
+    fi
+  fi
 elif ! flock -n 9; then
   echo "spark-cleanup already running" >&2
   if [ "$CLASSES" = 8 ]; then
@@ -730,12 +749,26 @@ copy_list() {
   done < <(find "$@" -xdev -maxdepth 6 \( -name node_modules -o -name target -o -name .lake -o -name venv -o -name .venv \) -prune \
        -o -name .git -print -prune 2>/dev/null | sed 's#/\.git$##' | sort)
 }
-# main clones, as the standing rules name them (~/workspace/<name> without a '-', here also with a
-# real .git folder), are shared reference copies: class 8 still checks them and reports work at risk
-# in one, but a clean one is a SKIP line, not a "remove it" alarm; --landed never touches them
+# main clones are shared reference copies: class 8 still checks them and reports work at risk in one, but a
+# clean one is a SKIP line, not a "remove it" alarm; --landed never touches them. A main clone is a folder
+# directly in ~/workspace with a real .git folder whose name either has no '-' (the standing rules' form,
+# ~/workspace/<name>) or is the name of a repository: a bare repository in the store (~/git/**/<name>.git or
+# <name>-mv.git) or the last part of one of its remote URLs (with or without -mv). So ~/workspace/omega-harness,
+# aien-architecture (store aien-architecture-mv.git) and aien-factory are main clones; a task folder named
+# <lane>-<task> is not.
+declare -A STORE_NAME=()
+for _b in "${STORE_REPOS[@]}"; do _b=${_b##*/}; _b=${_b%.git}; STORE_NAME[$_b]=1; STORE_NAME[${_b%-mv}]=1; done
 is_main_clone() {
+  local n k u
   [ -d "$1/.git" ] || return 1
-  case "$1" in "$H"/workspace/*/*) return 1 ;; "$H"/workspace/*-*) return 1 ;; "$H"/workspace/*) return 0 ;; esac
+  case "$1" in "$H"/workspace/*/*) return 1 ;; "$H"/workspace/*) ;; *) return 1 ;; esac
+  n=${1##*/}
+  case "$n" in *-*) ;; *) return 0 ;; esac
+  [ -n "${STORE_NAME[$n]:-}" ] && return 0
+  while read -r k u; do
+    u=${u%/}; u=${u%.git}; u=${u##*[/:]}
+    [ "$u" = "$n" ] || [ "${u%-mv}" = "$n" ] && return 0
+  done < <(git -C "$1" config --get-regexp '^remote\..*\.url$' 2>/dev/null)
   return 1
 }
 class8() {
@@ -838,12 +871,26 @@ copy_matches_repo() {  # $1 copy, $2 repository name
   done < <(git -C "$1" rev-list --max-parents=0 HEAD 2>/dev/null)
   return 1
 }
-# true when a board CLAIM line of the last CLAIM_DAYS days names the copy, or its worktree is locked
-claimed() {  # $1 copy, $2 file of claim lines
-  grep -qF -- "$1" "$2" && return 0
-  grep -qF -- "~/${1#"$H"/}" "$2" && return 0
+# claimed: a CLAIM line (board or ~/handoffs/hive/CLAIMS.md, last CLAIM_DAYS days) names the copy, a folder
+# above it or a path inside it, on a path boundary; or its worktree is locked. $2 holds one claimed absolute
+# path per line (claim_paths below).
+claimed() {  # $1 copy, $2 file of claimed paths
+  local p
+  while read -r p; do
+    [ -n "$p" ] || continue
+    case "$1/" in "$p"/*) return 0 ;; esac
+    case "$p/" in "$1"/*) return 0 ;; esac
+  done < "$2"
   [ -f "$1/.git" ] && [ -e "$(git -C "$1" rev-parse --path-format=absolute --git-dir 2>/dev/null)/locked" ] && return 0
   return 1
+}
+# every path a recent CLAIM line names, absolute, without trailing punctuation: ~/x, $HOME/x and /home/<me>/x
+claim_paths() {  # $@ claim files
+  local cutoff; cutoff=$(date -u -d "$CLAIM_DAYS days ago" +%FT%H:%M)
+  grep -ah 'CLAIM' "$@" 2>/dev/null \
+    | awk -v c="$cutoff" '{ s = $0; sub(/^- /, "", s) } s !~ /^[0-9][0-9][0-9][0-9]-/ || substr(s, 1, 16) >= c' \
+    | grep -oE "(~|\\\$HOME|$H)/[^[:space:]\"'\`<>|,;()]*" \
+    | sed -E "s#^(~|\\\$HOME)/#$H/#; s#[].:!?*]+\$##; s#/+\$##" | grep -v "^$H\$" | sort -u
 }
 deep_enough() { [ "$(awk -F/ '{print NF-1}' <<<"$1")" -ge 3 ] && [ "$1" != "$H" ]; }
 landed_remove() {  # $1 copy, $2 git dir, $3 common dir: saved and idle
@@ -890,6 +937,11 @@ landed_archive() {  # $1 copy, $2 git dir, $3 common dir, $4 what is unsaved
   na=$(zstd -dc "$a" | tar -tf - | wc -l)
   ns=$(cd / && $SUDO find "${members[@]}" 2>/dev/null | wc -l); [ -n "$brel" ] && ns=$((ns+1))
   if [ "$na" != "$ns" ]; then rm -f "$a"; lkeep "$r" "unsaved ($why); archive holds $na entries, the copy $ns"; return; fi
+  # contents too: every member's bytes, size, mode and time against the copy (the bundle is in the stage)
+  local tardiff=(-C /); [ -n "$brel" ] && tardiff=(--exclude="$brel" -C /)
+  if ! zstd -dc "$a" | $SUDO tar -df - "${tardiff[@]}" >>"$LOG" 2>&1; then
+    rm -f "$a"; lkeep "$r" "unsaved ($why); archive differs from the copy (tar -d)"; return
+  fi
   sz=$(single_link_bytes "$r"); sha=$(sha256sum "$a" | cut -d' ' -f1)
   rm -rf --one-file-system -- "$r" 2>/dev/null || $SUDO rm -rf --one-file-system -- "$r"
   if [ -e "$r" ]; then log "landed ALARM $r archived to $a but not fully removed: look at what is left"; return; fi
@@ -926,9 +978,8 @@ landed() {
   [ -n "${LANDED_ROOTS//$'\n'/}" ] || { LANDED_ROOTS=""; log "landed: no $repo.git with commits in $GITSTORE; copies matched by remote URL only"; }
   local roots=(); for r in "$H/workspace" "$H/work" "$H/.claude/jobs"; do [ -d "$r" ] && roots+=("$r"); done
   [ ${#roots[@]} -gt 0 ] || { log "landed $repo: no copy folders"; return; }
-  local cutoff; cutoff=$(date -u -d "$CLAIM_DAYS days ago" +%FT%H:%M)
-  grep -a 'CLAIM' "${SPARK_CLEANUP_BOARD:-$H/handoffs/BOARD.md}" 2>/dev/null \
-    | awk -v c="$cutoff" '!/^[0-9][0-9][0-9][0-9]-/ || substr($1,1,16) >= c' > "$TMPD/claims"
+  claim_paths "${SPARK_CLEANUP_BOARD:-$H/handoffs/BOARD.md}" "${SPARK_CLEANUP_CLAIMS:-$H/handoffs/hive/CLAIMS.md}" > "$TMPD/claims"
+  log "landed: $(wc -l < "$TMPD/claims") claimed path(s) from CLAIM lines of the last $CLAIM_DAYS days"
   copy_list "${roots[@]}" > "$TMPD/landed"
   while read -r r; do
     case "$r/" in /tmp/*|"$H"/handoffs/*) continue ;; esac
@@ -948,6 +999,9 @@ landed() {
     while read -r f; do [ -n "$f" ] && ! in_git_store "$f" && bad=$((bad+1)); done <<<"$(sort -u <<<"$heads")"
     nest=$(nested_unstored "$r") || true
     uns=$(copy_unsaved "$r") || true
+    # the in-use set was collected at the start of the run: look again just before removing anything
+    collect_inuse
+    if in_use "$r"; then lkeep "$r" "open by a running process (fresh look before removal)"; continue; fi
     if [ "$bad" = 0 ] && [ -z "$nest" ] && [ -z "$uns" ]; then landed_remove "$r" "$gd" "$cd"; continue; fi
     if [ "$bad" -gt 0 ]; then why="$bad ref(s) not in ~/git"; elif [ -n "$nest" ]; then why="$nest"; else why="$uns"; fi
     if ! idle_outside_git "$r" $((LANDED_ARCHIVE_D*1440)); then lkeep "$r" "unsaved ($why), written in the last ${LANDED_ARCHIVE_D} d"; continue; fi
