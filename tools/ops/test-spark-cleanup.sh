@@ -97,6 +97,8 @@
 #               free space" ALARM, and is listed in landed-pending
 #   l2-recheck  the landing of orepo, with the default reserve, archives that copy; landed-pending then
 #               lists only the copies still claimed
+#   c2-claim    class 2 in the same home: a saved idle worktree that a current CLAIM names stays (class2 SKIP
+#               claimed); the claim of ~/workspace/ is not used (a class2 ALARM), so the unclaimed one is removed
 #   class 5 (own scratch home, a scratch folder in place of /tmp, SPARK_CLEANUP_TMP_MAX=1 ignored):
 #   c5-hook     the test hook says class 5 read the scratch folder
 #   c5-unsaved  a /tmp clone with a commit not in ~/git stays: class5 SKIP unsaved naming the commit
@@ -418,6 +420,15 @@ landed2_cases() {  # $1 spark-cleanup copy
     && has "$L2" "landed KEEP $W/big/cb \(unsaved .*not enough free space to archive\)" && grep -qxF "$W/big/cb" "$h/p2.txt"; echo $?)"
   check l2-recheck "$( [ -f "$W/big/cb/ARCHIVED.txt" ] && has "$L3" "landed ARCHIVED .*$W/big/cb -> .*\[kept at an earlier landing\]" \
     && [ "$(cat "$P")" = "$(printf '%s\n%s' "$W/rels/cs" "$W/relu/cu")" ]; echo $?)"
+  git clone -q "$h/git/lrepo.git" "$h/workspace/lrepo"
+  git -C "$h/workspace/lrepo" worktree add -q -b c2a "$h/workspace/wt-c2claim"
+  git -C "$h/workspace/lrepo" worktree add -q -b c2b "$h/workspace/wt-c2free"
+  printf '%s CLAIM omp LaneW ~/workspace/wt-c2claim for a test\n' "$(date -u +%FT%H:%M:%SZ)" >> "$h/handoffs/BOARD.md"
+  find "$h/workspace" -exec touch -h -d '5 days ago' {} +
+  run "$h" "$s" --apply --classes 2
+  check c2-claim "$( [ -f "$h/workspace/wt-c2claim/f" ] && has "$h/out.txt" "class2 SKIP claimed $h/workspace/wt-c2claim\$" \
+    && [ ! -e "$h/workspace/wt-c2free" ] && has "$h/out.txt" "class2 REMOVED .*$h/workspace/wt-c2free" \
+    && has "$h/out.txt" "class2 ALARM claim of a whole copy folder not used: .*RootLane $h/workspace"; echo $?)"
 }
 
 # class 5 in its own scratch home, reading a scratch folder in place of /tmp: a /tmp git copy
@@ -586,7 +597,7 @@ for spec in \
   'landed-idle|s/if ! idle_outside_git "\$r" \$\(\(LANDED_IDLE_H\*60\)\); then/if false; then/' \
   'landed-inuse|s/if in_use "\$r"; then lwait/if false; then lwait/' \
   'landed-claim|s/if claimed "\$r" "\$TMPD\/claims"; then/if false; then/' \
-  'claims-board-only|s/ "\$\{SPARK_CLEANUP_CLAIMS:-\$H\/handoffs\/hive\/CLAIMS\.md\}"//' \
+  'claims-board-only|s/ "\$\{SPARK_CLEANUP_CLAIMS:-\$H\/handoffs\/hive\/CLAIMS\.md\}"//g' \
   'claim-exact-only|s/    case "\$1\/" in "\$p"\/\*\) return 0 ;; esac\n/    [ "\$1" = "\$p" ] \&\& return 0\n/' \
   'main-dash-name|s/  \[ -n "\$\{STORE_NAME\[\$n\]:-\}" \] && return 0\n//' \
   'landed-unsaved-removed|s/if \[ "\$bad" = 0 \] && \[ -z "\$nest" \] && \[ -z "\$uns" \]; then landed_remove/if true; then landed_remove/' \
@@ -606,6 +617,7 @@ for spec in \
   'build-in-archive|s/(build_output\(\) \{  # \$1 copy\n)/$1  return 0\n/' \
   'no-room-check|s/ \|\| \[ "\$room" -lt "\$need" \]; then/; then/' \
   'claim-file-missing|s/if \[ -r "\$f" \]; then files\+=/if true; then files+=/' \
+  'class2-claim-ignored|s/if claimed "\$wt" "\$TMPD\/c2claims"; then/if false; then/' \
   'alarm-reads-as-claim|s/to all: a claim line names/to all: a CLAIM line names/' ; do
   name=${spec%%|*}; expr=${spec#*|}
   mt=$((mt+1)); mutate "$name" "$expr" && mc=$((mc+1))
