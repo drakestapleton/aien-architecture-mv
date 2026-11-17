@@ -14,10 +14,12 @@ note token of uppercase letters or digits that holds a digit or runs on to the n
 note or path part). So
 note lowercase names (paths, crates, URLs), identifiers (AIENOS_DISK, AienosCapRef) and labels (AIENOS-PKV-ENVID-KEY-V1,
 note AIENOS/M5/CORTEX-V1) are code and pass, while AIENOS-based or AIENOS/kernel is prose.
-note Quoted text keeps its words: `code spans` (one left open runs to the end of the line), then
+note Quoted text keeps its words: `code spans` (a run of backticks closes at the next run of the same
+note length; one left open runs to the end of the line, as a Markdown span may wrap), then
 note "double quotes", then curly quotes (U+201C .. U+201D), removed in that order.
 note Never judged (history is never rewritten): evidence/, */evidence/*, receipts/, */receipts/*,
-note docs/history/, docs/archive/, CHANGELOG*, */CHANGELOG*, docs/adr/0038-*, tools/name-check/*, and added
+note docs/history/, docs/archive/, CHANGELOG*, */CHANGELOG*, docs/adr/0038-names-aienux-kernel-aienos-system.md
+note (that exact path), tools/name-check/*, and added
 note lines that start with _Avoid_: (glossary lines naming the retired words on purpose).
 note Output: one line per finding, then "name-check: FAIL" (exit 1) or "name-check: PASS" (exit 0);
 note a refusal prints one line that names its reason (exit 2).
@@ -26,7 +28,7 @@ note that is neither +++ b/PATH nor +++ /dev/null (diff.noprefix, a C-quoted nam
 note diff line longer than 16777216 bytes (the largest array this compiler builds, OMEGESE 8).
 
 text wtbl "Aienix\nAIENIX\nAIENOS\nAienos\n"
-text atbl "evidence/\nreceipts/\ndocs/history/\ndocs/archive/\nCHANGELOG\ndocs/adr/0038-\ntools/name-check/\n/evidence/\n/receipts/\n/CHANGELOG\n"
+text atbl "evidence/\nreceipts/\ndocs/history/\ndocs/archive/\nCHANGELOG\ndocs/adr/0038-names-aienux-kernel-aienos-system.md\ntools/name-check/\n/evidence/\n/receipts/\n/CHANGELOG\n"
 text tpre "name-check: "
 text tret ": retired name '"
 text tuse "' (use Aienux for the kernel, AienOS for the whole system)\n"
@@ -146,7 +148,13 @@ end
 fn allowed to bool
 for k ulong 7
 if pfxat k 0
+if ne k 5
 ret true
+end
+note entry 5 is ADR 0038's own file: exempt only under its exact path
+if eq get st 1 sub sub tstart 6 tstart 5 1
+ret true
+end
 end
 end
 pl = get st 1
@@ -368,8 +376,45 @@ end
 ret n
 end
 
+fn btend i ulong n ulong to ulong
+note end of the run of backticks that starts at lb[i]
+j = i
+while lt j n bound 17
+e = lim j n
+while lt j e bound 999999
+if ne ulong get lb j 96
+ret j
+end
+j = add j 1
+end
+end
+ret n
+end
+
+fn btclose i ulong n ulong ln ulong to ulong
+note start of the first run of exactly ln backticks at or after lb[i], else n
+j = i
+while lt j n bound 17
+e = lim j n
+while lt j e bound 999999
+if eq ulong get lb j 96
+k = btend j n
+if eq sub k j ln
+ret j
+end
+j = k
+continue
+end
+j = add j 1
+end
+end
+ret n
+end
+
 fn unbt n ulong to ulong
-note lb[1..n) -> tb with `code spans` removed; an unmatched backtick cuts the rest
+note lb[1..n) -> tb with `code spans` removed: a run of backticks closes at the next run of the same
+note length (``x`` and `x` are spans, as in Markdown); an unmatched run cuts the rest of the line,
+note because a Markdown code span may wrap onto the next line
 o = ulong 0
 i = ulong 1
 while lt i n bound 17
@@ -377,11 +422,12 @@ e = lim i n
 while lt i e bound 999999
 c = get lb i
 if eq c 96
-j = nextlb add i 1 n 96
+k = btend i n
+j = btclose k n sub k i
 if ge j n
 ret o
 end
-i = add j 1
+i = add j sub k i
 continue
 end
 put tb o c

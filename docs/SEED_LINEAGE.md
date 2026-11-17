@@ -34,7 +34,7 @@ Rungs, as defined in the L103 brief:
 
 ## 2. The inventory
 
-Machines: **S** = the Spark (DGX Spark, GB10), **I** = the iMac (Aienux kernel, x86-64), **P** = the Pi 5 hub, **Q** = QEMU only so far.
+Machines: **S** = the Spark (DGX Spark, GB10), **I** = the iMac (AIENOS kernel, x86-64), **P** = the Pi 5 hub, **Q** = QEMU only so far.
 
 "Under it" is what runs beneath the artifact that I did not write. "Rung" is the earliest rung that could birth it: `2` assembly text only, `6` GPU words from a listing, `NEW: <features>` needs language features that do not exist yet (section 4). No whole artifact is birthable at rung 3: rung 3 has no arrays, memory or I/O.
 
@@ -62,24 +62,24 @@ Machines: **S** = the Spark (DGX Spark, GB10), **I** = the iMac (Aienux kernel, 
 | 13 | GPU host and engine (`omega_gpu_*`, blackwell engine, submit, QMD, realize, matmul, gates) | omega | Command lists, launch descriptors, memory, waits, serving glue; ships as `libomega_gpu.a` | C | 16,100 (calc:d4e90cf7) | gcc, archive pinned by digest in sovereign-core `native-artifacts.lock` | Linux, NVIDIA module, GSP firmware | NEW: system calls, aggregates, volatile memory access |
 | 14 | checker2 | omega | Independent checker for realization receipts, LRAT proofs | C | 3,382 | gcc | libc | NEW: bytes, growable storage, hashing |
 | 15 | Runtime composition library (`src/runtime`, `librx_compose.a`) | omega | Graph, plan, route, cost model, operators, capability queue | C | 35,613 | gcc, archive pinned by digest | libc | NEW: nearly everything in section 4.1 |
-| 16 | OSH shell core | omega | Lexer, parser, expander for the AienOS shell | OSC + C references + sh | 5,174, of which 1,572 are OSC (`src/osh/*.osc`) | oscc (itself gcc-built) for the OSC part; gcc for the references | none | the OSC part is already in my language but is compiled by a gcc-built compiler, so it is born when OSC-14 self-host lands; the rest NEW |
+| 16 | OSH shell core | omega | Lexer, parser, expander for the AIENOS shell | OSC + C references + sh | 5,174, of which 1,572 are OSC (`src/osh/*.osc`) | oscc (itself gcc-built) for the OSC part; gcc for the references | none | the OSC part is already in my language but is compiled by a gcc-built compiler, so it is born when OSC-14 self-host lands; the rest NEW |
 | 17 | Omegese translator, `omega_emit`, `omega` CLI | omega | Omegese to IR to words; the one-layer path | C | Omegese 2,169, omega_emit 782, typediff 205, others | gcc | libc | the translator is itself the rung-3 product; its C original stays as oracle |
 | 18 | Research and experiment subsystems: visor, turing, estimation, searchtrace, dual, ans, tensor, train, autodiff, algebra, fabric, reservoir, polyglot, physics0, crumbline, allen, path | omega | Experiments and gates the program is judged by | C, a little asm | 40,235 (calc:48327d02) | gcc | libc | NEW; lowest priority, rebirth only when something in the serving path needs them |
 | 19 | Omega gate and chip-run scripts | omega | Run the gates and the chip tests | sh | 13,604 | not built; run by bash | bash, coreutils | NEW: the OSH shell (#16) must run first |
 
-### 2.3 Aienux (kernel and storage)
+### 2.3 AIENOS (kernel and storage)
 
 The local `~/workspace/aienos` is a docs-only copy; these numbers come from the GitHub main snapshot. The iMac lab drivers that are not on main (PR #415, #421) are not counted here (UNVERIFIED, from memory notes).
 
 | # | Artifact | Repo | What it does | Lang | Lines | Built today by | Under it | Rung |
 |---|---|---|---|---|---|---|---|---|
-| 20 | Aienux kernel (`native/kernel`) for Spark, Pi 5 and iMac | aienos | Memory, traps, devices, services; arm64 plus a small x86-64 port (x86 2,901 lines, arm64 arch 1,056) | C, asm, sh | 67,200 (calc:ca49e87e); asm inside is 887 lines | aarch64-linux-gnu gcc, ld, objcopy, plus Rust static libraries linked in | S: platform UEFI firmware. P: VideoCore firmware and the UEFI build in `rpi5-uefi`. I: Apple firmware (section 4.2) | asm part: 2. The rest: NEW: privileged instructions and system registers, volatile device memory, interrupt entry, inline words, all of 4.1. Last in order |
+| 20 | AIENOS kernel (`native/kernel`) for Spark, Pi 5 and iMac | aienos | Memory, traps, devices, services; arm64 plus a small x86-64 port (x86 2,901 lines, arm64 arch 1,056) | C, asm, sh | 67,200 (calc:ca49e87e); asm inside is 887 lines | aarch64-linux-gnu gcc, ld, objcopy, plus Rust static libraries linked in | S: platform UEFI firmware. P: VideoCore firmware and the UEFI build in `rpi5-uefi`. I: Apple firmware (section 4.2) | asm part: 2. The rest: NEW: privileged instructions and system registers, volatile device memory, interrupt entry, inline words, all of 4.1. Last in order |
 | 21 | EFI boot stage and slot loader (`native/boot`) | aienos | Loads the kernel image, signed A/B slot choice | C, asm, ld | 4,020 | gcc, ld | UEFI firmware | NEW: PE/COFF header as hand-hex words, bytes, signatures |
 | 22 | Disk and NVMe path (`native/disk`, kernel `dev/nvme_*`, `disk_*`) | aienos | NVMe and SD block I/O, partitioning | C | 4,021 | gcc | NVMe controller firmware; none of mine | NEW: volatile device memory, DMA, bytes |
 | 23 | Store (`native/store`) | aienos | Crash-safe artifact store: torn-slot handling, sealed records | C | 7,319 | gcc | the block device (#22) | NEW: bytes, aggregates, growable storage |
 | 24 | Crypto and signatures (`native/crypto`, `native/sig`) | aienos | SHA-256, Ed25519 style checks | C | 2,698 (calc:3059d70b) | gcc | none | NEW, but the smallest: xor, shifts, rotates, 32 and 64-bit wrap, byte arrays |
 | 25 | Capability, ARGUS, net, m5 | aienos | Authority tokens, defensive plane, network, small services | C | 25,894 (calc:1dbda6f3) | gcc | NIC firmware | NEW: all of 4.1 |
-| 26 | Aienux Rust crates (kernel model, boot, infer, store tool, others) | aienos | Host-side models and the two crates linked into the kernel image (`aienos-infer-kernel` 715, `aienos-capability-ffi` 768) | Rust | 72,716 (`aienos-kernel` alone 38,704) | rustc | Linux for host crates; none for the two kernel crates | NEW; Rust is scaffolding by project rule, so these are rewritten in Omega, not carried across |
+| 26 | AIENOS Rust crates (kernel model, boot, infer, store tool, others) | aienos | Host-side models and the two crates linked into the kernel image (`aienos-infer-kernel` 715, `aienos-capability-ffi` 768) | Rust | 72,716 (`aienos-kernel` alone 38,704) | rustc | Linux for host crates; none for the two kernel crates | NEW; Rust is scaffolding by project rule, so these are rewritten in Omega, not carried across |
 
 ### 2.4 Host runtime, the LLM path and tools
 
@@ -126,7 +126,7 @@ Principle: smallest and purest integer code first; code that needs bytes, string
 | 10 | OSH shell, #16, then the scripts, #19, #31 | shell tools can only be born once a shell is | each script's output byte-identical on a fixed run |
 | 11 | Store, #23, storage drivers, #22, boot stage, #21 | need volatile device memory and DMA | torn-write and recovery tests identical; boot image byte-identical |
 | 12 | Capability, ARGUS, net, #25 | large, rely on the above | existing gates unchanged |
-| 13 | Aienux kernel, #20 | 67,200 lines, privileged instructions, interrupts, device memory, and the only artifact that cannot be tested without hardware | kernel image byte-identical to the gcc build, QEMU gates, then native gates |
+| 13 | AIENOS kernel, #20 | 67,200 lines, privileged instructions, interrupts, device memory, and the only artifact that cannot be tested without hardware | kernel image byte-identical to the gcc build, QEMU gates, then native gates |
 | 14 | Runtime, serve-http, judge and the rest, #26 to #30, #32 | these are Rust scaffolding by project rule; they are rewritten in Omega rather than re-compiled | behaviour and receipts identical to the Rust build on a fixed request corpus |
 
 Research subsystems (#18) have no fixed place; they move when a needed part of the serving path depends on them.
@@ -162,11 +162,11 @@ Further gaps from my reading of the inventory. These are UNVERIFIED against a la
 |---|---|---|
 | GSP firmware (`gsp_*.bin`, loaded by the NVIDIA module; the GPU's own management processor) | S | The GPU runs it on a processor inside the chip and, to my understanding, accepts only NVIDIA-signed images checked by hardware keys fused into the chip. I hold no signing key, so I can send work to it but not replace it. UNVERIFIED here (no driver source line found in the physics snapshot saying so); confidence high. The physics repo's native driver path (`nvrm/`) talks to it through the Linux module. |
 | GPU silicon boot ROM and memory training | S | Mask ROM and on-chip fuses: written at manufacture, read-only. |
-| Spark CPU boot firmware (the early secure stages and platform UEFI) | S | The chip's first instructions come from vendor ROM that checks the next stage's signature. Atlas can be the first stage I choose only where the platform lets an owner-signed image run. Native Spark boot of Aienux is parked (memory note, 2026-10-18). |
+| Spark CPU boot firmware (the early secure stages and platform UEFI) | S | The chip's first instructions come from vendor ROM that checks the next stage's signature. Atlas can be the first stage I choose only where the platform lets an owner-signed image run. Native Spark boot of AIENOS is parked (memory note, 2026-10-18). |
 | CPU microcode | I | Loaded by the Intel CPU from vendor-signed blobs; the CPU rejects unsigned microcode. |
 | iMac firmware (Apple UEFI, SMC, Intel management engine) | I | Vendor-signed and write-protected by hardware locks. Firmware replacement on the lab iMac is approved (Drake, 2026-10-18), but a read-only backup and a lock survey come first and no write code exists; whether the locks can be opened is not yet known. |
 | Pi 5 boot ROM, VideoCore firmware, EEPROM | P | The Pi's first stage is mask ROM and VideoCore code from Raspberry Pi; my UEFI (`rpi5-uefi`) and Atlas start only after it. |
-| Linux kernel and the NVIDIA open kernel module on the Spark and Pi hub | S, P | Not a physical limit: replaceable once Aienux runs there. They sit under every Spark artifact today, which is why the Spark's serving path (section 2.5) cannot be fully mine yet. |
+| Linux kernel and the NVIDIA open kernel module on the Spark and Pi hub | S, P | Not a physical limit: replaceable once AIENOS runs there. They sit under every Spark artifact today, which is why the Spark's serving path (section 2.5) cannot be fully mine yet. |
 | Network and storage controller firmware (NIC, NVMe drive) | all | Inside each device and unreachable from the host. |
 
 What the seed can reach is everything from the first instruction I am allowed to run upward: it cannot reach below the first signed vendor stage.

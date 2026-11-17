@@ -12,6 +12,13 @@ index 0000000..2b50292
 +++ b/a.md
 @@ -0,0 +1 @@
 +It runs AIENOS.
+diff --git a/docs/adr/0038-names.md b/docs/adr/0038-names.md
+new file mode 100644
+index 0000000..54b4c57
+--- /dev/null
++++ b/docs/adr/0038-names.md
+@@ -0,0 +1 @@
++the ADR names AIENOS and Aienix on purpose
 diff --git a/docs/after-span.md b/docs/after-span.md
 new file mode 100644
 index 0000000..9e5e6af

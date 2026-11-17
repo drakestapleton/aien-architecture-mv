@@ -19,11 +19,11 @@ index 0000000..546b47a
 +++ b/README.md
 @@ -0,0 +1 @@
 +Aienux is the kernel; AienOS is the whole system; AIEN is the agent.
-diff --git a/docs/adr/0038-names.md b/docs/adr/0038-names.md
+diff --git a/docs/adr/0038-names-aienux-kernel-aienos-system.md b/docs/adr/0038-names-aienux-kernel-aienos-system.md
 new file mode 100644
 index 0000000..54b4c57
 --- /dev/null
-+++ b/docs/adr/0038-names.md
++++ b/docs/adr/0038-names-aienux-kernel-aienos-system.md
 @@ -0,0 +1 @@
 +the ADR names AIENOS and Aienix on purpose
 diff --git a/docs/archive/old.md b/docs/archive/old.md
@@ -47,6 +47,13 @@ index 0000000..8a341d3
 +++ b/docs/c.md
 @@ -0,0 +1 @@
 +the banner `AIENOS Standalone` appears
+diff --git a/docs/double-span.md b/docs/double-span.md
+new file mode 100644
+index 0000000..036e4d1
+--- /dev/null
++++ b/docs/double-span.md
+@@ -0,0 +1 @@
++the span ``AIENOS`` and the span ``a ` AIENOS`` pass
 diff --git a/docs/efi.md b/docs/efi.md
 new file mode 100644
 index 0000000..85216d5

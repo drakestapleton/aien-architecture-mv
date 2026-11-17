@@ -1,5 +1,6 @@
 name-check: README.md:1: retired name 'Aienix' (use Aienux for the kernel, AienOS for the whole system)
 name-check: a.md:1: retired name 'AIENOS' (use Aienux for the kernel, AienOS for the whole system)
+name-check: docs/adr/0038-names.md:1: retired name 'AIENOS' (use Aienux for the kernel, AienOS for the whole system)
 name-check: docs/after-span.md:1: retired name 'AIENOS' (use Aienux for the kernel, AienOS for the whole system)
 name-check: docs/archive-not-dir.md:1: retired name 'AIENOS' (use Aienux for the kernel, AienOS for the whole system)
 name-check: docs/compound.md:1: retired name 'AIENOS' (use Aienux for the kernel, AienOS for the whole system)

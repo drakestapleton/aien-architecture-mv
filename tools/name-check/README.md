@@ -8,18 +8,23 @@ Refuses new uses of the retired project names ([ADR 0038](../../docs/adr/0038-na
 - `Aienix` / `AIENIX` are refused everywhere outside quoted text, also inside a longer word or an
   identifier (`AIENIX_MODE`): another company uses the name.
 - `AIENOS` / `Aienos` are refused when they stand as a word in prose, including prose compounds:
-  `AIENOS-based`, `AIENOS-Omega`, `AIENOS/Aienux`, `AIENOS-2 release`, `non-AIENOS`.
+  `AIENOS-based`, `AIENOS-Omega`, `AIENOS/Aienux`, `non-AIENOS`.
 - Code passes: lowercase names (paths, crates, URLs, the aienos.com address), identifiers that only
   contain the word (`AIENOS_DISK`, `AienosCapRef`), labels and path parts where `-` or `/` is
-  followed by a token of uppercase letters or digits that runs on to the next `-`, `/` or `_`
-  (`AIENOS-PKV-ENVID-KEY-V1`, the key-derivation label `AIENOS/M5/CORTEX-V1`), path parts joined by
+  followed by a token of uppercase letters or digits that holds a digit or runs on to the next `-`,
+  `/` or `_` (`AIENOS-PKV-ENVID-KEY-V1`, the key-derivation label `AIENOS/M5/CORTEX-V1`, the lane
+  label `AIENOS-PI5`; so `AIENOS-2` and `AIENOS-V2` pass as labels too), path parts joined by
   a backslash (`\EFI\AIENOS\MODEL.MAP`) and file names (`AIENOS.md`). These change with their own
   tests, never with prose; renaming a key-derivation label would change the derived keys. A path
   part after `/` (`Atlas/AIENOS`) also passes: it cannot be told from a directory name.
 - Quoted text keeps its words: code spans, double quotes and curly quotes (older documents and
-  program output are quoted as they were written).
+  program output are quoted as they were written). A run of backticks closes at the next run of the
+  same length, as in Markdown (`` ``AIENOS`` `` is a span); a run left open quotes the rest of the
+  line, because a Markdown span may wrap onto the next line. An unmatched double or curly quote
+  quotes nothing.
 - History is never judged: `evidence/`, `receipts/` (at any depth), `docs/history/`,
-  `docs/archive/`, `CHANGELOG*` (at any depth), this tool and ADR 0038 itself, and glossary lines
+  `docs/archive/`, `CHANGELOG*` (at any depth), this tool, ADR 0038 itself (its exact path
+  `docs/adr/0038-names-aienux-kernel-aienos-system.md`, no other file), and glossary lines
   starting `_Avoid_:`.
 - Other ADRs, dated audits and reports are judged on purpose. They are history and are not edited
   (the 2026-11-15 rename left them as written); a new ADR, audit or amendment is new text and uses
@@ -55,8 +60,8 @@ six fixtures to give exactly their recorded exit and output, counting those that
 
 | Fixture | Exit | Output | What it holds |
 |---|---|---|---|
-| `fixtures/red.diff` | 1 | `red.out` (20 findings) | every retired form, an `AIENIX_` identifier, compounds, a word outside a quotation, unmatched quotes, line numbers inside a hunk, a fake header line, a path with a space |
-| `fixtures/green.diff` | 0 | `green.out` | the new names, identifiers, labels, backslash path parts, file names, every history path (also nested), the glossary line, each kind of quotation |
+| `fixtures/red.diff` | 1 | `red.out` (21 findings) | every retired form, an `AIENIX_` identifier, compounds, a word outside a quotation, unmatched quotes, line numbers inside a hunk, a fake header line, a path with a space, another file whose name starts like ADR 0038's |
+| `fixtures/green.diff` | 0 | `green.out` | the new names, identifiers, labels, backslash path parts, file names, every history path (also nested, and ADR 0038 under its exact path), the glossary line, each kind of quotation (also double-backtick code spans) |
 | `fixtures/long.diff` | 1 | `long.out` | one added line of 1000017 bytes with the retired word at its end (longer than one inner loop) |
 | `fixtures/refuse.diff` | 2 | `refuse.out` | a file name git C-quotes |
 | `fixtures/nohdr.diff` | 2 | `nohdr.out` | an added line before any `diff --git` header |
@@ -81,8 +86,8 @@ step by hand.
 
 ## Compilers
 
-`namecheck.om` and `gate.om` compile with the repository pin (omc `734f0a39…`, omega-mv `a0eafa39`)
-and with the newest omega-mv build at the time of writing (omc `26540e6d…`, omega-mv `e4271abd`).
+`namecheck.om` and `gate.om` compile with the repository pin, the compiler named in
+`tools/zero-legacy/omega.pin` (`gate.sh` refuses any other, NOT_RUN, exit 3).
 Every loop bound stays at or under 999999, the largest bound the pinned compiler accepts. A loop that
 passes its bound stops the program (trap 4), so each long scan is an outer loop of at most 17 passes
 around an inner loop that ends one pass below its bound (17 x 999998 >= 16777216 bytes).
