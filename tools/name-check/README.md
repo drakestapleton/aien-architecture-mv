@@ -21,7 +21,8 @@ Refuses new uses of the retired project names ([ADR 0038](../../docs/adr/0038-na
   program output are quoted as they were written). A run of backticks closes at the next run of the
   same length, as in Markdown (`` ``AIENOS`` `` is a span); a run left open quotes the rest of the
   line, because a Markdown span may wrap onto the next line. An unmatched double or curly quote
-  quotes nothing.
+  quotes nothing. The tool reads `-U0` hunks and cannot see where a fenced code block opens, so
+  lines inside a fence are judged as prose: quote a banner or GRUB entry there with an inline span.
 - History is never judged: `evidence/`, `receipts/` (at any depth), `docs/history/`,
   `docs/archive/`, `CHANGELOG*` (at any depth), this tool, ADR 0038 itself (its exact path
   `docs/adr/0038-names-aienux-kernel-aienos-system.md`, no other file), and glossary lines
@@ -60,7 +61,7 @@ six fixtures to give exactly their recorded exit and output, counting those that
 
 | Fixture | Exit | Output | What it holds |
 |---|---|---|---|
-| `fixtures/red.diff` | 1 | `red.out` (21 findings) | every retired form, an `AIENIX_` identifier, compounds, a word outside a quotation, unmatched quotes, line numbers inside a hunk, a fake header line, a path with a space, another file whose name starts like ADR 0038's |
+| `fixtures/red.diff` | 1 | `red.out` (22 findings) | every retired form, an `AIENIX_` identifier, compounds, a word outside a quotation, unmatched quotes, line numbers inside a hunk, a fake header line, a path with a space, another file whose name starts like ADR 0038's, a longer path that starts with ADR 0038's exact path |
 | `fixtures/green.diff` | 0 | `green.out` | the new names, identifiers, labels, backslash path parts, file names, every history path (also nested, and ADR 0038 under its exact path), the glossary line, each kind of quotation (also double-backtick code spans) |
 | `fixtures/long.diff` | 1 | `long.out` | one added line of 1000017 bytes with the retired word at its end (longer than one inner loop) |
 | `fixtures/refuse.diff` | 2 | `refuse.out` | a file name git C-quotes |
@@ -97,7 +98,7 @@ around an inner loop that ends one pass below its bound (17 x 999998 >= 16777216
 This tool replaces the bash `name-check.sh` of the unlanded branch `naming/name-check-gate`
 (`90296b21`). On real diffs (the reverts of the twelve naming branches of 2026-11-15, which add
 the retired words back on 681 lines) the Omega tool reports every one of the bash tool's 675
-findings, byte for byte, with each compiler, and 6 more: prose compounds such as `AIENOS-native`
+findings, byte for byte, and 6 more: prose compounds such as `AIENOS-native`
 that the bash tool passed. It also refuses what the bash tool passed silently: a fake header line
 inside added text, a diff made with `diff.noprefix` and C-quoted file names. The bash tool's `--allow GLOB` option is not carried over: no caller used it, and an
 allowance outside the tool's own reviewed table would not be reviewed.

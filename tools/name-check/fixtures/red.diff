@@ -12,6 +12,13 @@ index 0000000..2b50292
 +++ b/a.md
 @@ -0,0 +1 @@
 +It runs AIENOS.
+diff --git a/docs/adr/0038-names-aienux-kernel-aienos-system.md.orig b/docs/adr/0038-names-aienux-kernel-aienos-system.md.orig
+new file mode 100644
+index 0000000..54b4c57
+--- /dev/null
++++ b/docs/adr/0038-names-aienux-kernel-aienos-system.md.orig
+@@ -0,0 +1 @@
++a copy of the ADR names AIENOS
 diff --git a/docs/adr/0038-names.md b/docs/adr/0038-names.md
 new file mode 100644
 index 0000000..54b4c57
