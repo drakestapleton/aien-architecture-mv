@@ -70,11 +70,12 @@
 #       name has no '-' or is a repository's name (a store <name>.git or
 #       <name>-mv.git, or the last part of one of its remote URLs)
 #     protected copies
-#     claimed copies: a CLAIM line of the last SPARK_CLEANUP_CLAIM_DAYS days
-#       (default 14) on the board (SPARK_CLEANUP_BOARD) or in
-#       ~/handoffs/hive/CLAIMS.md (SPARK_CLEANUP_CLAIMS), not followed by a
-#       RELEASE line of the same lane, names the copy, a folder above it or a
-#       path inside it; or a locked worktree. A claim of a whole copy folder
+#     claimed copies: a CLAIM line on the board (SPARK_CLEANUP_BOARD) or in
+#       ~/handoffs/hive/CLAIMS.md (SPARK_CLEANUP_CLAIMS), dated in the last
+#       SPARK_CLEANUP_CLAIM_DAYS days (default 14) or not dated at all, and not
+#       followed by a RELEASE line of the same lane (a CLAIM line whose lane
+#       cannot be read is never released), names the copy, a folder above it or
+#       a path inside it; or a locked worktree. A claim of a whole copy folder
 #       (~/workspace, ~/work, ~/.claude/jobs) or of a folder above one (~) is
 #       not used: it is an ALARM in the log every run and one board line per set.
 #       A missing claim file is skipped; one that cannot be read is an ALARM
