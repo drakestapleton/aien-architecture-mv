@@ -32,7 +32,8 @@
 #   5  /tmp entries untouched 2 d, not named by RESUME.md/lock. An entry holding a
 #      git repository (itself, nested or bare) goes only when every repository in
 #      it is saved in ~/git as class 8 means it (refs, submodule commits, no
-#      unsaved files); else "class5 SKIP unsaved". Size never decides.
+#      unsaved files); else "class5 SKIP unsaved". A locked linked worktree stays
+#      ("class5 SKIP locked"): its main clone keeps the record. Size never decides.
 #      dry-classes file: ~/.config/spark-cleanup/dry-classes
 #   6  journald vacuum to 2G.
 #   7  models: REPORT ONLY. Never deletes. Use the manual procedure in the
@@ -711,6 +712,7 @@ class5() {
     if in_use "$d"; then continue; fi
     if recent "$d" $((2*1440)); then continue; fi
     if protected_path "$d"; then log "class5 SKIP protected $d"; continue; fi
+    if [ -f "$d/.git" ] && [ -e "$(git -C "$d" rev-parse --path-format=absolute --git-dir 2>/dev/null)/locked" ]; then log "class5 SKIP locked $d"; continue; fi
     if grep -qxF -- "$d" "$named"; then log "class5 SKIP named-by-resume-or-lock $d"; continue; fi
     # a git copy in /tmp is removed only when everything in it is saved in ~/git
     if [ -d "$d" ] && why=$(repos_unsaved "$d"); then

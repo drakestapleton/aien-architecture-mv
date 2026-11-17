@@ -106,6 +106,7 @@
 #   c5-saved    a saved /tmp clone over the old size cap goes, no over-cap line
 #   c5-junk     a /tmp folder with no repository goes
 #   c5-bigalarm one ALARM line names each entry over SPARK_CLEANUP_BIG_ALARM, removed or kept, not the small one
+#   c5-locked   a saved, locked linked worktree in /tmp stays: class5 SKIP locked, its main clone still lists it
 # Then mutants of spark-cleanup must each make at least one case fail.
 # Ends `TEST PASS cases=N mutants=M/M` (exit 0) or `TEST FAIL ...` (exit 1).
 set -u
@@ -446,6 +447,8 @@ class5_cases() {  # $1 spark-cleanup copy
   git clone -q "$h/git/c5repo.git" "$t/unsaved"
   echo u > "$t/unsaved/u"; git -C "$t/unsaved" add u; git -C "$t/unsaved" commit -qm u
   git clone -q "$h/git/c5repo.git" "$t/plain/sub"; echo mine > "$t/plain/sub/notes.txt"
+  git clone -q "$h/git/c5repo.git" "$h/main"; git -C "$h/main" worktree add -q "$t/lockedwt" -b lk
+  git -C "$h/main" worktree lock "$t/lockedwt"
   echo j > "$t/junk/j"
   find "$t" -exec touch -h -d '5 days ago' {} +
   : > "$h/inuse"
@@ -460,6 +463,7 @@ class5_cases() {  # $1 spark-cleanup copy
   check c5-saved "$( [ ! -e "$t/saved" ] && has "$L" "class5 REMOVED .*$t/saved " && ! has "$L" 'over-cap'; echo $?)"
   check c5-junk "$( [ ! -e "$t/junk" ] && has "$L" "class5 REMOVED .*$t/junk "; echo $?)"
   check c5-bigalarm "$( [ "$(grep -c 'ALARM entries over' "$L")" = 1 ] && has "$L" "ALARM entries over .*$t/saved [0-9.]+G \(class5 removed\)" && has "$L" "ALARM entries over .*$t/unsaved [0-9.]+G \(class5 kept: unsaved\)" && ! has "$L" "ALARM entries over .*$t/junk "; echo $?)"
+  check c5-locked "$( [ -f "$t/lockedwt/.git" ] && has "$L" "class5 SKIP locked $t/lockedwt$" && ! has "$L" "class5 REMOVED .*$t/lockedwt " && git -C "$h/main" worktree list | grep -q "$t/lockedwt"; echo $?)"
 }
 
 suite() {  # $1 spark-cleanup copy; sets pass/fail
@@ -618,7 +622,8 @@ for spec in \
   'no-room-check|s/ \|\| \[ "\$room" -lt "\$need" \]; then/; then/' \
   'claim-file-missing|s/if \[ -r "\$f" \]; then files\+=/if true; then files+=/' \
   'class2-claim-ignored|s/if claimed "\$wt" "\$TMPD\/c2claims"; then/if false; then/' \
-  'alarm-reads-as-claim|s/to all: a claim line names/to all: a CLAIM line names/' ; do
+  'alarm-reads-as-claim|s/to all: a claim line names/to all: a CLAIM line names/' \
+  'c5-lock-ignored|s/log "class5 SKIP locked \$d"; continue;/:;/' ; do
   name=${spec%%|*}; expr=${spec#*|}
   mt=$((mt+1)); mutate "$name" "$expr" && mc=$((mc+1))
 done
